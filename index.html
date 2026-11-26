@@ -272,8 +272,8 @@
           </select>
         </div>
 
-        <textarea id="evalQuestion" rows="2" placeholder="Paste the UPSC Mains question..." class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
-        <textarea id="evalAnswer" rows="4" placeholder="Type your answer OR upload multiple handwritten pages below..." class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+        <textarea id="evalQuestion" rows="2" placeholder="Optional: paste the Mains question (leave blank if it is written on your uploaded sheet)..." class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+        <textarea id="evalAnswer" rows="4" placeholder="Optional: type your answer (leave blank if uploading pages below)..." class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
 
         <div class="space-y-2">
           <div class="flex flex-wrap items-center justify-between gap-2">
@@ -1111,8 +1111,7 @@ Return ONLY valid JSON:
       const marks = document.getElementById('evalMarks').value;
       const question = document.getElementById('evalQuestion').value.trim();
       const answer = document.getElementById('evalAnswer').value.trim();
-      if (!question) { showToast('Enter the Mains question first.'); return; }
-      if (!answer && !attachedImages.length) { showToast('Type your answer or attach pages.'); return; }
+      if (!answer && !attachedImages.length) { showToast('Upload your answer pages or type your answer.'); return; }
 
       const btn = document.getElementById('btnEvaluate');
       btn.disabled = true;
@@ -1120,7 +1119,7 @@ Return ONLY valid JSON:
       try {
         const prompt = `You are a strict UPSC CSE Mains examiner calibrated on AIR 1–10 topper scripts (25-30 word intro, 3-4 sub-headed body dimensions, diagrams/tables, GS I-IV Articles/Committees/Data/Thinkers, forward-looking conclusion).
 Evaluate for ${paper} (${marks}).
-Question: ${question}
+${question ? `Question: ${question}` : 'Question: Not typed separately—read the question directly from the top of the uploaded answer sheet (or infer the exact question demand from the candidate answer).'}
 ${answer ? `Answer:\n${answer}` : `Answer is in the attached ${attachedImages.length} handwritten page(s) in order.`}
 Return ONLY valid JSON: {"score":"e.g. 6.0 / 10","structureFeedback":"...","strengths":["..."],"gaps":["..."],"valueAdditions":["..."],"modelFramework":"..."}`;
         const parts = [{ text: prompt }];
