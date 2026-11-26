@@ -17,7 +17,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: #f8fafc; color: #0f172a; }
-    .tab-btn.active { background-color: #1e1b4b; color: #ffffff; }
+    .tab-btn.active { background-color: #1e1b4b; color: #ffffff !important; }
     .session-done { background-color: #f0fdf4; border-color: #86efac; }
     .custom-checkbox { width: 22px; height: 22px; border-radius: 6px; border: 2px solid #cbd5e1; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; background: #fff; }
     .custom-checkbox.checked { background: #16a34a; border-color: #16a34a; color: #fff; }
@@ -918,22 +918,10 @@ Return ONLY valid JSON array of 20 objects:
     }
 
     async function fetchTtsAudioBlobUrl(text) {
-      const ttsUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
-      const res = await fetch(ttsUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: text.slice(0, 4500) }] }],
-          generationConfig: {
-            responseModalities: ['AUDIO'],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: (document.getElementById('radioVoice')?.value || 'Kore') } } }
-          }
-        })
+      const wavBlob = await fetchFullTtsWavBlob(text, (idx, total) => {
+        const st = document.getElementById('radioStatusLine');
+        if (st) st.textContent = `Preparing full audio stream (part ${idx}/${total})...`;
       });
-      const data = await res.json();
-      const audioPart = data?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData && p.inlineData.data);
-      if (!res.ok || !audioPart) throw new Error('TTS unavailable');
-      const wavBlob = pcm16Base64ToWavBlob(audioPart.inlineData.data, 24000);
       return URL.createObjectURL(wavBlob);
     }
 
@@ -1466,9 +1454,14 @@ Return ONLY valid JSON:
     });
     document.getElementById('btnRadioPause').addEventListener('click', pauseRadioScript);
     document.getElementById('btnRadioStop').addEventListener('click', stopSpeech);
-    function pcm16Base64ToWavBlob(b64, sampleRate = 24000) {
-      const bin = atob(b64);
-      const pcmLen = bin.length;
+    function pcm16ChunksToWavBlob(b64List, sampleRate = 24000) {
+      const byteArrays = b64List.map((b64) => {
+        const bin = atob(b64);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        return arr;
+      });
+      const pcmLen = byteArrays.reduce((sum, a) => sum + a.length, 0);
       const buf = new ArrayBuffer(44 + pcmLen);
       const v = new DataView(buf);
       const wr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
@@ -1477,9 +1470,54 @@ Return ONLY valid JSON:
       v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true);
       v.setUint16(32, 2, true); v.setUint16(34, 16, true);
       wr(36, 'data'); v.setUint32(40, pcmLen, true);
-      const bytes = new Uint8Array(buf, 44);
-      for (let i = 0; i < pcmLen; i++) bytes[i] = bin.charCodeAt(i);
+      const out = new Uint8Array(buf, 44);
+      let offset = 0;
+      byteArrays.forEach((a) => { out.set(a, offset); offset += a.length; });
       return new Blob([buf], { type: 'audio/wav' });
+    }
+
+    function splitScriptForTts(text, maxChars = 3400) {
+      const sentences = text.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) || [text];
+      const chunks = [];
+      let cur = '';
+      sentences.forEach((s) => {
+        if ((cur + ' ' + s).trim().length > maxChars && cur.trim()) {
+          chunks.push(cur.trim());
+          cur = s;
+        } else {
+          cur = (cur + ' ' + s).trim();
+        }
+      });
+      if (cur.trim()) chunks.push(cur.trim());
+      return chunks;
+    }
+
+    async function fetchFullTtsWavBlob(text, onProgress) {
+      const chunks = splitScriptForTts(text, 3400);
+      const ttsUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
+      const voiceName = document.getElementById('radioVoice')?.value || 'Kore';
+      const b64Parts = [];
+      for (let i = 0; i < chunks.length; i++) {
+        if (onProgress) onProgress(i + 1, chunks.length);
+        const res = await fetch(ttsUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: chunks[i] }] }],
+            generationConfig: {
+              responseModalities: ['AUDIO'],
+              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } }
+            }
+          })
+        });
+        const data = await res.json();
+        const audioPart = data?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData && p.inlineData.data);
+        if (!res.ok || !audioPart) {
+          throw new Error((data.error && data.error.message) || `Audio part ${i + 1} unavailable.`);
+        }
+        b64Parts.push(audioPart.inlineData.data);
+      }
+      return pcm16ChunksToWavBlob(b64Parts, 24000);
     }
 
     async function downloadCurrentRadio() {
@@ -1498,24 +1536,10 @@ Return ONLY valid JSON:
       btnTop.textContent = 'Creating Audio...';
       btnBar.textContent = '...';
       try {
-        const ttsUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
-        const res = await fetch(ttsUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: currentRadioScript.slice(0, 4500) }] }],
-            generationConfig: {
-              responseModalities: ['AUDIO'],
-              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: (document.getElementById('radioVoice')?.value || 'Kore') } } }
-            }
-          })
+        const wavBlob = await fetchFullTtsWavBlob(currentRadioScript, (idx, total) => {
+          btnTop.textContent = `Part ${idx}/${total}...`;
+          btnBar.textContent = `${idx}/${total}`;
         });
-        const data = await res.json();
-        const audioPart = data?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData && p.inlineData.data);
-        if (!res.ok || !audioPart) {
-          throw new Error((data.error && data.error.message) || 'Audio generation unavailable right now (quota/limit).');
-        }
-        const wavBlob = pcm16Base64ToWavBlob(audioPart.inlineData.data, 24000);
         const url = URL.createObjectURL(wavBlob);
         const a = document.createElement('a');
         a.href = url;
