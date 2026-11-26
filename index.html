@@ -67,6 +67,9 @@
       <button type="button" data-tab="evaluator" class="tab-btn flex-1 sm:flex-none px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold text-slate-700 hover:text-slate-900 transition">
         Mains Agent
       </button>
+      <button type="button" data-tab="activity" class="tab-btn flex-1 sm:flex-none px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold text-slate-700 hover:text-slate-900 transition">
+        Activity
+      </button>
     </nav>
 
     <!-- TAB 1: DAILY CHECKLIST & RECORDS -->
@@ -193,7 +196,7 @@
               Sample Radio
             </button>
             <button id="btnDownloadRadioTop" type="button" class="px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700">
-              Download Offline
+              Download Audio
             </button>
           </div>
         </div>
@@ -222,7 +225,7 @@
                 Stop
               </button>
               <button id="btnDownloadRadio" type="button" class="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-xs font-semibold hover:bg-emerald-400">
-                Download
+                Audio (.wav)
               </button>
             </div>
           </div>
@@ -301,6 +304,34 @@
         <div id="resBody" class="space-y-3 text-sm text-slate-700"></div>
       </div>
     </section>
+
+    <!-- TAB 5: UNIFIED ACTIVITY HUB -->
+    <section id="tab-activity" class="hidden space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-sm space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 class="text-base font-bold text-slate-900">All Your Saved Activity</h2>
+            <p class="text-xs text-slate-500">Reopen any past checklist, Mains evaluation, News Radio briefing, or Prelims quiz.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <label for="inputRestoreAll" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 cursor-pointer">
+              Restore Backup
+            </label>
+            <input id="inputRestoreAll" type="file" accept="application/json,.json" class="hidden" />
+          </div>
+        </div>
+
+        <div class="flex flex-wrap gap-1.5" id="activityFilters">
+          <button type="button" data-filter="all" class="act-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-indigo-950 text-white">All</button>
+          <button type="button" data-filter="checklist" class="act-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">Checklists</button>
+          <button type="button" data-filter="mains" class="act-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">Mains Answers</button>
+          <button type="button" data-filter="radio" class="act-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">News Radio</button>
+          <button type="button" data-filter="quiz" class="act-filter-btn px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">Prelims Quizzes</button>
+        </div>
+
+        <div id="activityFeedList" class="space-y-2.5"></div>
+      </div>
+    </section>
   </div>
 
   <!-- Settings Modal -->
@@ -347,8 +378,13 @@
     let quizAnswers = {};
     let hoursChartInstance = null;
     const RADIO_ARCHIVE_KEY = 'upsc_radio_archive_v1';
+    const EVAL_HISTORY_KEY = 'upsc_eval_history_v1';
+    const QUIZ_HISTORY_KEY = 'upsc_quiz_history_v1';
     let currentRadioScript = '';
     let radioArchive = {};
+    let evalHistory = [];
+    let quizHistory = [];
+    let activityFilter = 'all';
     let radioAutoAttempted = false;
 
     function escapeHtml(str) {
@@ -378,10 +414,11 @@
       }
       try {
         const rawRadio = localStorage.getItem(RADIO_ARCHIVE_KEY);
-        if (rawRadio) {
-          const parsedRadio = JSON.parse(rawRadio);
-          if (parsedRadio && typeof parsedRadio === 'object') radioArchive = parsedRadio;
-        }
+        if (rawRadio) { const p = JSON.parse(rawRadio); if (p && typeof p === 'object') radioArchive = p; }
+        const rawEval = localStorage.getItem(EVAL_HISTORY_KEY);
+        if (rawEval) { const p = JSON.parse(rawEval); if (Array.isArray(p)) evalHistory = p; }
+        const rawQuiz = localStorage.getItem(QUIZ_HISTORY_KEY);
+        if (rawQuiz) { const p = JSON.parse(rawQuiz); if (Array.isArray(p)) quizHistory = p; }
       } catch (e) {}
       const { todayStr, rangeLabel } = getLastTwoDays();
       const hdrDateEl = document.getElementById('radioHeaderDate');
@@ -412,11 +449,12 @@
         b.classList.toggle('active', active);
         b.classList.toggle('text-slate-700', !active);
       });
-      ['checklist', 'quiz', 'radio', 'evaluator'].forEach((t) => {
+      ['checklist', 'quiz', 'radio', 'evaluator', 'activity'].forEach((t) => {
         document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== name);
       });
       if (name === 'checklist') renderHoursChart();
       if (name === 'radio') ensureRadioLoaded();
+      if (name === 'activity') renderActivityFeed();
     }
 
     // --- CHECKLIST ---
@@ -707,6 +745,10 @@
             });
             exp.classList.remove('hidden');
             updateQuizScore();
+            if (quizHistory[0] && quizHistory[0].questions === activeQuiz) {
+              quizHistory[0].answers = Object.assign({}, quizAnswers);
+              try { localStorage.setItem(QUIZ_HISTORY_KEY, JSON.stringify(quizHistory)); } catch (e) {}
+            }
           });
           optsWrap.appendChild(b);
         });
@@ -742,6 +784,19 @@ Return ONLY valid JSON array of 20 objects:
         const { text: raw } = await callGemini([{ text: prompt }], true, false);
         activeQuiz = extractJson(raw);
         quizAnswers = {};
+        const qEntry = {
+          id: `quiz_${Date.now()}`,
+          ts: Date.now(),
+          dateLabel: todayStr,
+          theme: theme || 'Mixed GS + Current Affairs',
+          questions: activeQuiz,
+          answers: {},
+          sources,
+          rangeLabel
+        };
+        quizHistory.unshift(qEntry);
+        if (quizHistory.length > 30) quizHistory.pop();
+        try { localStorage.setItem(QUIZ_HISTORY_KEY, JSON.stringify(quizHistory)); } catch (e) {}
         renderQuizQuestions(sources, rangeLabel);
         showToast(`20-MCQ set ready (${rangeLabel})!`);
       } catch (e) {
@@ -880,7 +935,13 @@ Return ONLY valid JSON array of 20 objects:
       utter.onend = () => {
         if (!radioIsPlaying) return;
         radioQueueIdx += 1;
-        speakNextChunk();
+        const activeDateKey = document.getElementById('radioDateSelect')?.value;
+      if (activeDateKey && radioArchive[activeDateKey]) {
+        radioArchive[activeDateKey].listened = true;
+        radioArchive[activeDateKey].lastPlayedAt = Date.now();
+        saveRadioArchive();
+      }
+      speakNextChunk();
       };
       utter.onerror = () => {
         if (!radioIsPlaying) return;
@@ -1095,13 +1156,21 @@ Return ONLY valid JSON:
       document.getElementById('resScoreBadge').textContent = r.score;
       const ul = (arr) => `<ul class="list-disc pl-5 space-y-1">${(arr || []).map((x) => `<li>${escapeHtml(x)}</li>`).join('')}</ul>`;
       document.getElementById('resBody').innerHTML = `
-        <div class="p-3 rounded-xl bg-slate-50 border border-slate-100"><strong>Structure:</strong> ${escapeHtml(r.structureFeedback || '')}</div>
+        ${r.detectedQuestion ? `<div class="p-3 rounded-xl bg-slate-100 text-xs text-slate-700"><strong>Detected Question:</strong> ${escapeHtml(r.detectedQuestion)}</div>` : ''}
+        <div class="p-3 rounded-xl bg-slate-50 border border-slate-200"><strong>Structure, Directive &amp; Presentation:</strong> ${escapeHtml(r.structureFeedback || '')}</div>
+        <div class="p-3 rounded-xl bg-rose-50/70 border border-rose-200">
+          <div class="text-xs font-bold text-rose-800 uppercase mb-1">Specific Mistakes &amp; Red Flags</div>
+          ${ul(r.mistakes || r.gaps)}
+        </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div class="p-3 rounded-xl bg-emerald-50/60 border border-emerald-100"><div class="text-xs font-bold text-emerald-800 uppercase mb-1">Strengths</div>${ul(r.strengths)}</div>
-          <div class="p-3 rounded-xl bg-amber-50/70 border border-amber-100"><div class="text-xs font-bold text-amber-800 uppercase mb-1">Gaps</div>${ul(r.gaps)}</div>
+          <div class="p-3 rounded-xl bg-amber-50/70 border border-amber-100"><div class="text-xs font-bold text-amber-800 uppercase mb-1">Missing Dimensions</div>${ul(r.gaps)}</div>
         </div>
-        <div class="p-3 rounded-xl bg-indigo-50/60 border border-indigo-100"><div class="text-xs font-bold text-indigo-900 uppercase mb-1">Topper Value Additions</div>${ul(r.valueAdditions)}</div>
-        <div class="p-3 rounded-xl bg-slate-50 border border-slate-100"><strong>Model Intro &amp; Way Forward:</strong> ${escapeHtml(r.modelFramework || '')}</div>
+        <div class="p-3 rounded-xl bg-indigo-50/60 border border-indigo-100"><div class="text-xs font-bold text-indigo-900 uppercase mb-1">Topper Value Additions (Articles, Data, Committees)</div>${ul(r.valueAdditions)}</div>
+        <div class="p-4 rounded-xl bg-indigo-950/5 border border-indigo-200 space-y-1.5">
+          <div class="text-xs font-bold text-indigo-900 uppercase">Complete Topper's Model Answer</div>
+          <div class="text-sm text-slate-800 whitespace-pre-line leading-relaxed">${escapeHtml(r.fullModelAnswer || r.modelFramework || '')}</div>
+        </div>
         ${(r.sources && r.sources.length) ? `<div class="p-3 rounded-xl bg-indigo-50/50 border border-indigo-100 text-xs"><strong>Verified Web Sources: </strong>${r.sources.map((s) => `<a href="${escapeHtml(s.uri)}" target="_blank" rel="noopener noreferrer" class="text-indigo-700 underline mr-2.5">${escapeHtml(s.title)}</a>`).join('')}</div>` : ''}
       `;
     }
@@ -1117,19 +1186,45 @@ Return ONLY valid JSON:
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> Evaluating...';
       try {
-        const prompt = `You are a strict UPSC CSE Mains examiner calibrated on AIR 1–10 topper scripts (25-30 word intro, 3-4 sub-headed body dimensions, diagrams/tables, GS I-IV Articles/Committees/Data/Thinkers, forward-looking conclusion).
-Evaluate for ${paper} (${marks}).
-${question ? `Question: ${question}` : 'Question: Not typed separately—read the question directly from the top of the uploaded answer sheet (or infer the exact question demand from the candidate answer).'}
-${answer ? `Answer:\n${answer}` : `Answer is in the attached ${attachedImages.length} handwritten page(s) in order.`}
-Return ONLY valid JSON: {"score":"e.g. 6.0 / 10","structureFeedback":"...","strengths":["..."],"gaps":["..."],"valueAdditions":["..."],"modelFramework":"..."}`;
+        const prompt = `You are a strict, thorough UPSC CSE Mains evaluator calibrated on AIR 1–10 topper scripts (Vision IAS, ForumIAS, UnlockIAS standards).
+Evaluate the candidate's answer for ${paper} (${marks}).
+${question ? `Question: ${question}` : 'Question: Read the exact question from the top of the uploaded answer sheet (or infer the exact question demand from the candidate answer).'}
+${answer ? `Answer:\n${answer}` : `Answer is in the attached ${attachedImages.length} handwritten page(s) in order. Transcribe every page carefully and audit every paragraph, factual claim, diagram, and handwriting presentation.`}
+Be rigorous:
+1. Identify SPECIFIC mistakes (factual errors, vague/generic statements, missed directive word like Examine/Critically Analyze, missing constitutional Articles/data/committees, lack of sub-headings or diagram, poor conclusion).
+2. Write a COMPLETE, full-length Topper's Model Answer matching the target word limit (${marks}) with Intro, 3–4 sub-headed body dimensions, concrete Articles/Data/Examples, a suggested diagram/flowchart, and a sharp Way Forward conclusion.
+Return ONLY valid JSON:
+{
+  "detectedQuestion": "The exact question text read or inferred",
+  "score": "e.g. 4.5 / 10",
+  "structureFeedback": "Detailed critique of intro, directive-word handling, sub-headings, flow, and presentation",
+  "mistakes": ["Specific mistake 1 from candidate's script", "Specific mistake 2", "Presentation/word-limit mistake 3"],
+  "strengths": ["..."],
+  "gaps": ["Missing dimension 1", "Missing dimension 2"],
+  "valueAdditions": ["Exact Article / SC Judgment / Committee / Data / Example to add"],
+  "fullModelAnswer": "Complete, ready-to-write UPSC Topper Model Answer (full Intro + sub-headed Body + Diagram idea + Conclusion)"
+}`;
         const parts = [{ text: prompt }];
         attachedImages.forEach((img, i) => {
           parts.push({ text: `[Answer Page ${i + 1}]` });
           parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
         });
         const { text: raw, sources } = await callGemini(parts, true, false);
-        renderEvaluationResult({ paper, marks, sources, ...extractJson(raw) });
-        showToast('Evaluation complete (web-grounded)!');
+        const evalObj = {
+          id: `eval_${Date.now()}`,
+          ts: Date.now(),
+          dateLabel: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+          paper,
+          marks,
+          pagesCount: attachedImages.length,
+          sources,
+          ...extractJson(raw)
+        };
+        evalHistory.unshift(evalObj);
+        if (evalHistory.length > 50) evalHistory.pop();
+        try { localStorage.setItem(EVAL_HISTORY_KEY, JSON.stringify(evalHistory)); } catch (e) {}
+        renderEvaluationResult(evalObj);
+        showToast('Evaluation complete & saved to Activity!');
       } catch (e) {
         showToast(e.message || 'Evaluation failed.');
       } finally {
@@ -1140,12 +1235,18 @@ Return ONLY valid JSON: {"score":"e.g. 6.0 / 10","structureFeedback":"...","stre
 
     function runSampleEvaluation() {
       renderEvaluationResult({
-        paper: 'GS Paper II', marks: '10 marks (150 words)', score: '6.0 / 10 (Sample)',
-        structureFeedback: 'Strong Article 280 opening. Split the body into horizontal criteria and local body grants, and add a 1-box diagram of devolution flows.',
-        strengths: ['Accurate Article 280 and 41% 15th FC devolution citation.'],
-        gaps: ['Missed 16th FC terms of reference and horizontal equity weights.'],
-        valueAdditions: ['Cite 2nd ARC & Sarkaria Commission on fiscal balance.'],
-        modelFramework: 'Intro: Article 280 makes the Finance Commission the constitutional anchor of fiscal federalism. Way Forward: Capping non-shareable cesses strengthens state fiscal space.'
+        detectedQuestion: 'Examine the role of the Finance Commission in strengthening cooperative federalism in India.',
+        paper: 'GS Paper II', marks: '10 marks (150 words)', score: '5.5 / 10 (Sample)',
+        structureFeedback: 'Good constitutional opening with Article 280, but lacks sub-headings, a devolution diagram, and explicit coverage of the directive "Examine" (pros + structural tensions).',
+        mistakes: [
+          'Missed horizontal devolution criteria (income distance 45%, population 15%, area 15%, demographic performance 12.5%, forest & ecology 10%, tax effort 2.5%).',
+          'Did not mention Article 280(3)(bb) & (c) grants to Panchayats and Municipalities.',
+          'No visual flowchart or table used to save words.'
+        ],
+        strengths: ['Accurate Article 280 and 41% 15th FC vertical devolution citation.'],
+        gaps: ['16th Finance Commission terms of reference', 'Overlap between GST Council and Finance Commission'],
+        valueAdditions: ['Cite 16th FC (chaired by Dr. Arvind Panagariya)', 'Mention 2nd ARC & Sarkaria Commission on fiscal federalism.'],
+        fullModelAnswer: 'Intro: Constituted every five years under Article 280, the Finance Commission acts as the constitutional balancer of India’s asymmetric fiscal federalism.\n\n1. Vertical & Horizontal Equity: The 15th FC recommended 41% vertical devolution to states and used objective horizontal weights (45% income distance, 15% population, 15% area, 12.5% demographic performance, 10% forest & ecology) to ensure fairness.\n2. Empowering Third Tier: Under Article 280(3)(bb) and (c), FC grants strengthen Panchayats and Urban Local Bodies.\n3. Emerging Tensions: Rising Union cesses and surcharges (outside the divisible pool) and post-GST fiscal rigidity constrain state autonomy.\n\n[Diagram: Centre -> Divisible Pool (41% Vertical) -> Horizontal Formula -> States & Local Bodies]\n\nConclusion: Capping non-shareable cesses and aligning 16th FC recommendations with GST Council decisions will deepen true cooperative federalism.'
       });
     }
 
@@ -1159,9 +1260,167 @@ Return ONLY valid JSON: {"score":"e.g. 6.0 / 10","structureFeedback":"...","stre
     document.getElementById('btnClearDay').addEventListener('click', () => { getDayRecord(state.selectedDate).completed = {}; saveRecords(); renderChecklistAll(); });
     document.getElementById('dailyNotes').addEventListener('input', (e) => { getDayRecord(state.selectedDate).notes = e.target.value; saveRecords(); });
 
+    function renderActivityFeed() {
+      const feedEl = document.getElementById('activityFeedList');
+      if (!feedEl) return;
+      const items = [];
+
+      // 1. Checklists
+      Object.keys(state.records).forEach((d) => {
+        const rec = state.records[d];
+        const st = calcDayStats(rec);
+        if (st.count > 0 || (rec.notes && rec.notes.trim())) {
+          items.push({
+            type: 'checklist',
+            sortTs: Date.parse(d) || 0,
+            badge: 'Checklist',
+            badgeCls: 'bg-emerald-100 text-emerald-800',
+            title: `${d} · ${st.count}/7 sessions (${st.hrs.toFixed(1)} hrs)`,
+            sub: rec.notes ? rec.notes : `${st.pct}% daily target completed`,
+            actionLabel: 'Open Day',
+            onAction: () => {
+              state.selectedDate = d;
+              switchTab('checklist');
+              renderChecklistAll();
+            }
+          });
+        }
+      });
+
+      // 2. Mains Answers
+      evalHistory.forEach((ev) => {
+        items.push({
+          type: 'mains',
+          sortTs: ev.ts || 0,
+          badge: `Mains · ${ev.score || ''}`,
+          badgeCls: 'bg-indigo-100 text-indigo-800',
+          title: ev.detectedQuestion || `${ev.paper} (${ev.marks})`,
+          sub: `${ev.dateLabel || ''} · ${ev.paper}${ev.pagesCount ? ` · ${ev.pagesCount} pages` : ''}`,
+          actionLabel: 'View Evaluation',
+          onAction: () => {
+            switchTab('evaluator');
+            renderEvaluationResult(ev);
+          }
+        });
+      });
+
+      // 3. News Radio
+      Object.keys(radioArchive).forEach((k) => {
+        const rd = radioArchive[k];
+        items.push({
+          type: 'radio',
+          sortTs: rd.lastPlayedAt || Date.parse(k) || 0,
+          badge: rd.listened ? 'Radio · Listened' : 'Radio · Saved',
+          badgeCls: 'bg-amber-100 text-amber-900',
+          title: `${rd.headline || 'UPSC Daily News Radio'} (${rd.displayDate || k})`,
+          sub: `${(rd.sections || []).length} UPSC topics · Ready offline`,
+          actionLabel: 'Listen Again',
+          onAction: () => {
+            switchTab('radio');
+            renderRadioArchiveSelect(k);
+          }
+        });
+      });
+
+      // 4. Prelims Quizzes
+      quizHistory.forEach((qz) => {
+        let sc = 0;
+        const ans = qz.answers || {};
+        Object.keys(ans).forEach((idx) => {
+          if (qz.questions[idx] && ans[idx] === qz.questions[idx].answerIndex) sc += 2;
+          else sc -= 0.66;
+        });
+        const attempted = Object.keys(ans).length;
+        items.push({
+          type: 'quiz',
+          sortTs: qz.ts || 0,
+          badge: `Quiz · ${attempted}/${(qz.questions || []).length}`,
+          badgeCls: 'bg-sky-100 text-sky-800',
+          title: `${qz.theme || 'UPSC Prelims Set'} (${qz.dateLabel || ''})`,
+          sub: attempted ? `Score: ${sc.toFixed(2)}` : 'Saved set — tap to attempt',
+          actionLabel: 'Open Quiz',
+          onAction: () => {
+            activeQuiz = qz.questions || [];
+            quizAnswers = Object.assign({}, qz.answers || {});
+            switchTab('quiz');
+            renderQuizQuestions(qz.sources || [], qz.rangeLabel || '');
+          }
+        });
+      });
+
+      const filtered = items
+        .filter((x) => activityFilter === 'all' || x.type === activityFilter)
+        .sort((a, b) => b.sortTs - a.sortTs);
+
+      if (!filtered.length) {
+        feedEl.innerHTML = '<div class="text-xs text-slate-500 py-6 text-center">No saved activity in this category yet.</div>';
+        return;
+      }
+
+      feedEl.innerHTML = '';
+      filtered.forEach((it) => {
+        const card = document.createElement('div');
+        card.className = 'p-3.5 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50';
+        card.innerHTML = `
+          <div class="min-w-0 space-y-1">
+            <span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold ${it.badgeCls}">${escapeHtml(it.badge)}</span>
+            <div class="text-sm font-semibold text-slate-900 truncate">${escapeHtml(it.title)}</div>
+            <div class="text-xs text-slate-500 truncate">${escapeHtml(it.sub)}</div>
+          </div>
+        `;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-200 text-indigo-700 hover:bg-indigo-50';
+        btn.textContent = it.actionLabel;
+        btn.addEventListener('click', it.onAction);
+        card.appendChild(btn);
+        feedEl.appendChild(card);
+      });
+    }
+
+    document.querySelectorAll('.act-filter-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        activityFilter = btn.getAttribute('data-filter');
+        document.querySelectorAll('.act-filter-btn').forEach((b) => {
+          const active = b.getAttribute('data-filter') === activityFilter;
+          b.className = `act-filter-btn px-3 py-1 rounded-full text-xs font-semibold ${active ? 'bg-indigo-950 text-white' : 'bg-slate-100 text-slate-700'}`;
+        });
+        renderActivityFeed();
+      });
+    });
+
+    document.getElementById('inputRestoreAll').addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      const rd = new FileReader();
+      rd.onload = () => {
+        try {
+          const data = JSON.parse(rd.result);
+          if (data.records) state.records = Object.assign({}, state.records, data.records);
+          else if (typeof data === 'object' && !data.radioArchive) state.records = Object.assign({}, state.records, data);
+          if (data.radioArchive) radioArchive = Object.assign({}, radioArchive, data.radioArchive);
+          if (Array.isArray(data.evalHistory)) evalHistory = data.evalHistory;
+          if (Array.isArray(data.quizHistory)) quizHistory = data.quizHistory;
+          saveRecords(); saveRadioArchive();
+          try {
+            localStorage.setItem(EVAL_HISTORY_KEY, JSON.stringify(evalHistory));
+            localStorage.setItem(QUIZ_HISTORY_KEY, JSON.stringify(quizHistory));
+          } catch (err) {}
+          renderChecklistAll(); renderRadioArchiveSelect(); renderActivityFeed();
+          showToast('All activity data restored!');
+        } catch (err) {
+          showToast('Invalid backup JSON file.');
+        }
+      };
+      rd.readAsText(f);
+      e.target.value = '';
+    });
+
     document.getElementById('btnExportJson').addEventListener('click', () => {
-      const b = new Blob([JSON.stringify(state.records, null, 2)], { type: 'application/json' });
-      const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = `upsc_records_${TODAY_STR}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(u);
+      const bundle = { records: state.records, radioArchive, evalHistory, quizHistory };
+      const b = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+      const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = `upsc_lbsnaa_backup_${TODAY_STR}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(u);
+      showToast('Full activity backup downloaded.');
     });
     document.getElementById('btnExportCsv').addEventListener('click', () => {
       const rows = ['Date,Sessions,Hours,Completion %'];
@@ -1180,24 +1439,72 @@ Return ONLY valid JSON: {"score":"e.g. 6.0 / 10","structureFeedback":"...","stre
     document.getElementById('btnRadioPlay').addEventListener('click', playRadioScript);
     document.getElementById('btnRadioPause').addEventListener('click', pauseRadioScript);
     document.getElementById('btnRadioStop').addEventListener('click', stopSpeech);
-    function downloadCurrentRadio() {
+    function pcm16Base64ToWavBlob(b64, sampleRate = 24000) {
+      const bin = atob(b64);
+      const pcmLen = bin.length;
+      const buf = new ArrayBuffer(44 + pcmLen);
+      const v = new DataView(buf);
+      const wr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+      wr(0, 'RIFF'); v.setUint32(4, 36 + pcmLen, true); wr(8, 'WAVE');
+      wr(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true);
+      v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+      wr(36, 'data'); v.setUint32(40, pcmLen, true);
+      const bytes = new Uint8Array(buf, 44);
+      for (let i = 0; i < pcmLen; i++) bytes[i] = bin.charCodeAt(i);
+      return new Blob([buf], { type: 'audio/wav' });
+    }
+
+    async function downloadCurrentRadio() {
       if (!currentRadioScript) {
         showToast('Generate or tap Sample Radio first.');
         return;
       }
-      const dateText = document.getElementById('radioDateBadge').textContent || TODAY_STR;
-      const headline = document.getElementById('radioHeadline').textContent || 'UPSC Daily News Radio';
-      const content = `${headline}\n${dateText}\n\n${currentRadioScript}\n`;
-      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `UPSC_News_Radio_${new Date().toISOString().slice(0, 10)}.txt`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      showToast('Briefing downloaded for offline use.');
+      if (!apiKey.trim()) {
+        document.getElementById('settingsModal').classList.remove('hidden');
+        showToast('Add your Gemini API key to generate a downloadable .wav audio file (saved briefings already play offline in-app).');
+        return;
+      }
+      const btnTop = document.getElementById('btnDownloadRadioTop');
+      const btnBar = document.getElementById('btnDownloadRadio');
+      btnTop.disabled = true; btnBar.disabled = true;
+      btnTop.textContent = 'Creating Audio...';
+      btnBar.textContent = '...';
+      try {
+        const ttsUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
+        const res = await fetch(ttsUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: currentRadioScript.slice(0, 4500) }] }],
+            generationConfig: {
+              responseModalities: ['AUDIO'],
+              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } }
+            }
+          })
+        });
+        const data = await res.json();
+        const audioPart = data?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData && p.inlineData.data);
+        if (!res.ok || !audioPart) {
+          throw new Error((data.error && data.error.message) || 'Audio generation unavailable right now (quota/limit).');
+        }
+        const wavBlob = pcm16Base64ToWavBlob(audioPart.inlineData.data, 24000);
+        const url = URL.createObjectURL(wavBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `UPSC_News_Radio_${new Date().toISOString().slice(0, 10)}.wav`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('Audio (.wav) downloaded!');
+      } catch (e) {
+        showToast(e.message || 'Could not export audio file right now.');
+      } finally {
+        btnTop.disabled = false; btnBar.disabled = false;
+        btnTop.textContent = 'Download Audio';
+        btnBar.textContent = 'Audio (.wav)';
+      }
     }
     document.getElementById('btnDownloadRadio').addEventListener('click', downloadCurrentRadio);
     document.getElementById('btnDownloadRadioTop').addEventListener('click', downloadCurrentRadio);
