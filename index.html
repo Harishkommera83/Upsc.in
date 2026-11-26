@@ -170,7 +170,8 @@
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <h2 class="text-base font-bold text-slate-900">Daily UPSC News Radio</h2>
-            <p class="text-xs text-slate-500">Listen to GS I–IV current affairs updates with constitutional &amp; Mains/Prelims explanations.</p>
+            <div id="radioHeaderDate" class="inline-flex items-center gap-1.5 mt-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-800">Loading date...</div>
+            <p class="text-xs text-slate-500 mt-1">Listen to GS I–IV current affairs updates with constitutional &amp; Mains/Prelims explanations.</p>
           </div>
           <div class="flex items-center gap-2">
             <label for="radioSpeed" class="text-xs font-semibold text-slate-600">Pace:</label>
@@ -369,6 +370,9 @@
           if (parsedRadio && typeof parsedRadio === 'object') radioArchive = parsedRadio;
         }
       } catch (e) {}
+      const { todayStr, rangeLabel } = getLastTwoDays();
+      const hdrDateEl = document.getElementById('radioHeaderDate');
+      if (hdrDateEl) hdrDateEl.textContent = `Today: ${todayStr} · Window: ${rangeLabel}`;
       updateApiBadge();
       renderChecklistAll();
       renderRadioArchiveSelect();
@@ -576,29 +580,53 @@
         { name: 'Indian Express (India)', url: 'https://indianexpress.com/section/india/feed/' }
       ];
       const cutoff = Date.now() - 2 * 86400000;
-      const items = [];
+      const recentItems = [];
+      const fallbackItems = [];
       const sources = [];
       const seenLinks = new Set();
+
+      const pushEntry = (sourceName, title, desc, link, pubDateStr) => {
+        if (!title || !link || seenLinks.has(link)) return;
+        seenLinks.add(link);
+        const parsedTs = Date.parse(pubDateStr || '');
+        const ts = isNaN(parsedTs) ? Date.now() : parsedTs;
+        const cleanDesc = String(desc || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 260);
+        const dateLabel = new Date(ts).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+        const obj = { source: sourceName, date: dateLabel, title: String(title).trim(), desc: cleanDesc, link, ts };
+        if (ts >= cutoff) recentItems.push(obj);
+        else fallbackItems.push(obj);
+      };
 
       await Promise.all(feeds.map(async (f) => {
         try {
           const res = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(f.url)}`);
-          if (!res.ok) return;
-          const data = await res.json();
-          (data.items || []).forEach((it) => {
-            const ts = Date.parse(it.pubDate || '');
-            if (!isNaN(ts) && ts >= cutoff && !seenLinks.has(it.link)) {
-              seenLinks.add(it.link);
-              const cleanDesc = String(it.description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 260);
-              const dateLabel = new Date(ts).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-              items.push({ source: f.name, date: dateLabel, title: it.title, desc: cleanDesc, link: it.link, ts });
+          if (res.ok) {
+            const data = await res.json();
+            if (data && Array.isArray(data.items) && data.items.length) {
+              data.items.forEach((it) => pushEntry(f.name, it.title, it.description, it.link, it.pubDate));
+              return;
             }
-          });
+          }
+        } catch (e) {}
+        try {
+          const res2 = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(f.url)}`);
+          if (res2.ok) {
+            const xmlText = await res2.text();
+            const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
+            Array.from(doc.querySelectorAll('item')).slice(0, 6).forEach((el) => {
+              const t = el.querySelector('title')?.textContent;
+              const l = el.querySelector('link')?.textContent;
+              const d = el.querySelector('description')?.textContent;
+              const p = el.querySelector('pubDate')?.textContent;
+              pushEntry(f.name, t, d, l, p);
+            });
+          }
         } catch (e) {}
       }));
 
-      items.sort((a, b) => b.ts - a.ts);
-      const top = items.slice(0, 12);
+      recentItems.sort((a, b) => b.ts - a.ts);
+      fallbackItems.sort((a, b) => b.ts - a.ts);
+      const top = (recentItems.length >= 2 ? recentItems : recentItems.concat(fallbackItems)).slice(0, 12);
       top.forEach((x) => sources.push({ title: `${x.source} (${x.date})`, uri: x.link }));
       const articlesText = top.map((x, i) => `${i + 1}. [${x.date}] (${x.source}) ${x.title} — ${x.desc}`).join('\n');
       return { articlesText, sources, rawItems: top };
@@ -776,7 +804,7 @@ Return ONLY valid JSON array of 20 objects:
     function ensureRadioLoaded() {
       const todayKey = new Date().toISOString().slice(0, 10);
       renderRadioArchiveSelect();
-      if (!radioArchive[todayKey] && apiKey.trim() && !radioAutoAttempted) {
+      if (!radioArchive[todayKey] && !radioAutoAttempted) {
         radioAutoAttempted = true;
         generateNewsRadio(true);
       }
@@ -823,27 +851,32 @@ Return ONLY valid JSON:
     {"date": "${todayStr}", "paper": "GS Paper II · Polity", "title": "...", "explanation": "...", "linkage": "Articles / Committees / Precedents"}
   ]
 }`;
-        let parsed;
-        try {
-          const { text: raw } = await callGemini([{ text: prompt }], true, false);
-          parsed = extractJson(raw);
-        } catch (aiErr) {
+        let parsed = null;
+        if (apiKey.trim()) {
+          try {
+            const { text: raw } = await callGemini([{ text: prompt }], true, false);
+            parsed = extractJson(raw);
+          } catch (aiErr) {
+            parsed = null;
+          }
+        }
+        if (!parsed) {
           if (rawItems && rawItems.length > 0) {
             const topItems = rawItems.slice(0, 6);
             const spokenParts = topItems.map((it, idx) => `Update ${idx + 1}, dated ${it.date}, from ${it.source}. ${it.title}. ${it.desc}`);
             parsed = {
-              headline: 'UPSC Live Feed Radio (Quota-Free Mode)',
-              spokenScript: `Here is your UPSC Daily News Radio for ${todayStr}, covering live updates from ${yesterdayStr} and ${todayStr}. ` + spokenParts.join(' '),
+              headline: `UPSC Live Feed Radio · ${todayStr}`,
+              spokenScript: `Today is ${todayStr}. Here is your UPSC Daily News Radio covering updates from ${yesterdayStr} and ${todayStr}. ` + spokenParts.join(' '),
               sections: topItems.map((it) => ({
                 date: it.date,
                 paper: it.source,
                 title: it.title,
                 explanation: it.desc || 'Open the source link above to read the full release.',
-                linkage: 'Direct live RSS update (Gemini API quota exceeded — switched to zero-quota feed mode).'
+                linkage: 'Live Govt & Newspaper RSS Briefing (works without API key or quota).'
               }))
             };
           } else {
-            throw aiErr;
+            throw new Error('Could not reach live news feeds right now. Check your internet connection or try Sample Radio.');
           }
         }
         radioArchive[todayKey] = {
