@@ -218,9 +218,19 @@
               <button id="btnRadioStop" type="button" class="px-3 py-1.5 rounded-lg bg-white/15 text-white text-xs font-semibold hover:bg-white/25">
                 Stop
               </button>
+              <button id="btnDownloadRadio" type="button" class="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-xs font-semibold hover:bg-emerald-400">
+                Download
+              </button>
             </div>
           </div>
-          <div id="radioStatusLine" class="text-xs text-indigo-200">Press Play to listen at 0.95x pace.</div>
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
+            <div id="radioStatusLine" class="text-xs text-indigo-200">Press Play to listen at 0.95x pace.</div>
+            <label class="inline-flex items-center gap-1.5 text-xs text-indigo-200 cursor-pointer">
+              <input id="chkKeepAwake" type="checkbox" checked class="rounded border-indigo-400" />
+              <span>Keep screen awake</span>
+            </label>
+          </div>
+          <audio id="bgKeepAliveAudio" loop class="hidden"></audio>
         </div>
       </div>
 
@@ -759,9 +769,116 @@ Return ONLY valid JSON array of 20 objects:
       showToast('Loaded sample UPSC Prelims questions.');
     }
 
-    // --- DAILY NEWS RADIO ---
+    // --- DAILY NEWS RADIO (BACKGROUND KEEP-ALIVE + MEDIA SESSION + CHUNKED TTS) ---
+    let radioWakeLock = null;
+    let radioQueue = [];
+    let radioQueueIdx = 0;
+    let radioIsPlaying = false;
+
+    function buildSilentWavUrl() {
+      // 1-second silent PCM WAV data URI so mobile browsers register active media playback
+      const sampleRate = 8000, numSamples = 8000;
+      const buf = new ArrayBuffer(44 + numSamples);
+      const v = new DataView(buf);
+      const wr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+      wr(0, 'RIFF'); v.setUint32(4, 36 + numSamples, true); wr(8, 'WAVE');
+      wr(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+      wr(36, 'data'); v.setUint32(40, numSamples, true);
+      for (let i = 0; i < numSamples; i++) v.setUint8(44 + i, 128);
+      return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+    }
+
+    async function acquireWakeLock() {
+      const chk = document.getElementById('chkKeepAwake');
+      if (chk && chk.checked && 'wakeLock' in navigator) {
+        try { radioWakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+      }
+    }
+
+    function releaseWakeLock() {
+      if (radioWakeLock) {
+        try { radioWakeLock.release(); } catch (e) {}
+        radioWakeLock = null;
+      }
+    }
+
+    function startBgAudioAndMediaSession() {
+      const audio = document.getElementById('bgKeepAliveAudio');
+      if (audio) {
+        if (!audio.src) audio.src = buildSilentWavUrl();
+        audio.play().catch(() => {});
+      }
+      if ('mediaSession' in navigator) {
+        try {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: document.getElementById('radioHeadline').textContent || 'UPSC Daily News Radio',
+            artist: 'UPSC · LBSNAA 2027',
+            album: document.getElementById('radioDateBadge').textContent || 'Daily Briefing',
+            artwork: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' }]
+          });
+          navigator.mediaSession.playbackState = 'playing';
+          navigator.mediaSession.setActionHandler('play', () => playRadioScript());
+          navigator.mediaSession.setActionHandler('pause', () => pauseRadioScript());
+          navigator.mediaSession.setActionHandler('stop', () => stopSpeech());
+        } catch (e) {}
+      }
+      acquireWakeLock();
+    }
+
+    function stopBgAudioAndMediaSession() {
+      const audio = document.getElementById('bgKeepAliveAudio');
+      if (audio) { try { audio.pause(); } catch (e) {} }
+      if ('mediaSession' in navigator) {
+        try { navigator.mediaSession.playbackState = 'none'; } catch (e) {}
+      }
+      releaseWakeLock();
+    }
+
+    function pauseRadioScript() {
+      radioIsPlaying = false;
+      if ('speechSynthesis' in window) window.speechSynthesis.pause();
+      if ('mediaSession' in navigator) {
+        try { navigator.mediaSession.playbackState = 'paused'; } catch (e) {}
+      }
+      document.getElementById('radioStatusLine').textContent = 'Paused.';
+    }
+
     function stopSpeech() {
+      radioIsPlaying = false;
+      radioQueue = [];
+      radioQueueIdx = 0;
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      stopBgAudioAndMediaSession();
+      const st = document.getElementById('radioStatusLine');
+      if (st) st.textContent = 'Stopped.';
+    }
+
+    function speakNextChunk() {
+      if (!radioIsPlaying || radioQueueIdx >= radioQueue.length) {
+        if (radioIsPlaying) {
+          radioIsPlaying = false;
+          stopBgAudioAndMediaSession();
+          document.getElementById('radioStatusLine').textContent = 'Briefing finished.';
+        }
+        return;
+      }
+      const chunk = radioQueue[radioQueueIdx];
+      const utter = new SpeechSynthesisUtterance(chunk);
+      utter.rate = parseFloat(document.getElementById('radioSpeed').value) || 0.95;
+      utter.lang = 'en-IN';
+      utter.onend = () => {
+        if (!radioIsPlaying) return;
+        radioQueueIdx += 1;
+        speakNextChunk();
+      };
+      utter.onerror = () => {
+        if (!radioIsPlaying) return;
+        radioQueueIdx += 1;
+        speakNextChunk();
+      };
+      document.getElementById('radioStatusLine').textContent = `Playing part ${radioQueueIdx + 1}/${radioQueue.length} at ${utter.rate}x...`;
+      window.speechSynthesis.speak(utter);
     }
 
     function playRadioScript() {
@@ -770,13 +887,20 @@ Return ONLY valid JSON array of 20 objects:
         return;
       }
       if (!currentRadioScript) return;
-      stopSpeech();
-      const utter = new SpeechSynthesisUtterance(currentRadioScript);
-      utter.rate = parseFloat(document.getElementById('radioSpeed').value) || 0.95;
-      utter.lang = 'en-IN';
-      utter.onstart = () => { document.getElementById('radioStatusLine').textContent = `Playing at ${utter.rate}x speed...`; };
-      utter.onend = () => { document.getElementById('radioStatusLine').textContent = 'Briefing finished.'; };
-      window.speechSynthesis.speak(utter);
+      if (window.speechSynthesis.paused && radioIsPlaying === false && radioQueue.length > 0) {
+        radioIsPlaying = true;
+        window.speechSynthesis.resume();
+        startBgAudioAndMediaSession();
+        return;
+      }
+      window.speechSynthesis.cancel();
+      // Split into sentence chunks (~180 chars max) to prevent mobile Chrome 15s cutoff
+      radioQueue = currentRadioScript.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) || [currentRadioScript];
+      radioQueue = radioQueue.map((s) => s.trim()).filter(Boolean);
+      radioQueueIdx = 0;
+      radioIsPlaying = true;
+      startBgAudioAndMediaSession();
+      speakNextChunk();
     }
 
     function saveRadioArchive() {
@@ -1040,8 +1164,27 @@ Return ONLY valid JSON: {"score":"e.g. 6.0 / 10","structureFeedback":"...","stre
     });
     document.getElementById('btnSampleRadio').addEventListener('click', loadSampleRadio);
     document.getElementById('btnRadioPlay').addEventListener('click', playRadioScript);
-    document.getElementById('btnRadioPause').addEventListener('click', () => { if ('speechSynthesis' in window) window.speechSynthesis.pause(); });
+    document.getElementById('btnRadioPause').addEventListener('click', pauseRadioScript);
     document.getElementById('btnRadioStop').addEventListener('click', stopSpeech);
+    document.getElementById('btnDownloadRadio').addEventListener('click', () => {
+      if (!currentRadioScript) {
+        showToast('Generate or load a briefing first.');
+        return;
+      }
+      const dateText = document.getElementById('radioDateBadge').textContent || TODAY_STR;
+      const headline = document.getElementById('radioHeadline').textContent || 'UPSC Daily News Radio';
+      const content = `${headline}\n${dateText}\n\n${currentRadioScript}\n`;
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `UPSC_News_Radio_${new Date().toISOString().slice(0, 10)}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast('Briefing downloaded for offline reading/listening.');
+    });
 
     document.getElementById('evalImageInput').addEventListener('change', (e) => {
       Array.from(e.target.files || []).forEach((file) => {
