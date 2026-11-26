@@ -313,7 +313,7 @@
     const TODAY_STR = '2026-11-26';
     const STORAGE_KEY = 'upsc_daily_study_records_v1';
     const KEY_STORAGE = 'upsc_agent_gemini_key_v1';
-    const GEMINI_MODELS = ['gemini-4-hydrogen', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
+    const GEMINI_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-4-hydrogen'];
 
     const SESSIONS = [
       { id: '1', time: '6:10 – 7:30 AM', label: 'New Books / Static', minutes: 80, durationText: '1 hr 20 min', tag: 'Static' },
@@ -601,7 +601,7 @@
       const top = items.slice(0, 12);
       top.forEach((x) => sources.push({ title: `${x.source} (${x.date})`, uri: x.link }));
       const articlesText = top.map((x, i) => `${i + 1}. [${x.date}] (${x.source}) ${x.title} — ${x.desc}`).join('\n');
-      return { articlesText, sources };
+      return { articlesText, sources, rawItems: top };
     }
 
     function getLastTwoDays() {
@@ -811,8 +811,8 @@ Return ONLY valid JSON array of 20 objects:
       try {
         const { todayStr, yesterdayStr, rangeLabel } = getLastTwoDays();
         const todayKey = new Date().toISOString().slice(0, 10);
-        const { articlesText, sources } = await fetchLastTwoDaysRssNews();
-        const newsBlock = articlesText ? `\n\nLIVE LAST-2-DAYS NEWS FROM THE HINDU & INDIAN EXPRESS (${rangeLabel}):\n${articlesText}` : '';
+        const { articlesText, sources, rawItems } = await fetchLastTwoDaysRssNews();
+        const newsBlock = articlesText ? `\n\nLIVE LAST-2-DAYS NEWS FROM GOVT & NEWSPAPER FEEDS (${rangeLabel}):\n${articlesText}` : '';
         const prompt = `Prepare a UPSC CSE-level Daily Current Affairs Audio Briefing${topics ? ` focusing on: ${topics}` : ' covering 4 high-yield GS I–IV updates'} strictly from the last 2 days (${yesterdayStr} and ${todayStr}).${newsBlock}
 IMPORTANT FOR AUDIO: Start the spokenScript by clearly saying the date ("Here is your UPSC Daily News Radio for ${todayStr}, covering updates from ${yesterdayStr} and ${todayStr}"), and before each news story explicitly speak the article's date.
 Return ONLY valid JSON:
@@ -823,8 +823,29 @@ Return ONLY valid JSON:
     {"date": "${todayStr}", "paper": "GS Paper II · Polity", "title": "...", "explanation": "...", "linkage": "Articles / Committees / Precedents"}
   ]
 }`;
-        const { text: raw } = await callGemini([{ text: prompt }], true, false);
-        const parsed = extractJson(raw);
+        let parsed;
+        try {
+          const { text: raw } = await callGemini([{ text: prompt }], true, false);
+          parsed = extractJson(raw);
+        } catch (aiErr) {
+          if (rawItems && rawItems.length > 0) {
+            const topItems = rawItems.slice(0, 6);
+            const spokenParts = topItems.map((it, idx) => `Update ${idx + 1}, dated ${it.date}, from ${it.source}. ${it.title}. ${it.desc}`);
+            parsed = {
+              headline: 'UPSC Live Feed Radio (Quota-Free Mode)',
+              spokenScript: `Here is your UPSC Daily News Radio for ${todayStr}, covering live updates from ${yesterdayStr} and ${todayStr}. ` + spokenParts.join(' '),
+              sections: topItems.map((it) => ({
+                date: it.date,
+                paper: it.source,
+                title: it.title,
+                explanation: it.desc || 'Open the source link above to read the full release.',
+                linkage: 'Direct live RSS update (Gemini API quota exceeded — switched to zero-quota feed mode).'
+              }))
+            };
+          } else {
+            throw aiErr;
+          }
+        }
         radioArchive[todayKey] = {
           dateKey: todayKey,
           displayDate: `${todayStr} (${rangeLabel})`,
