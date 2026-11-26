@@ -917,12 +917,74 @@ Return ONLY valid JSON array of 20 objects:
       window.speechSynthesis.speak(utter);
     }
 
-    async function fetchTtsAudioBlobUrl(text) {
-      const wavBlob = await fetchFullTtsWavBlob(text, (idx, total) => {
-        const st = document.getElementById('radioStatusLine');
-        if (st) st.textContent = `Preparing full audio stream (part ${idx}/${total})...`;
-      });
-      return URL.createObjectURL(wavBlob);
+    let ttsChunks = [];
+    let ttsChunkIdx = 0;
+    let ttsPartUrls = {};
+
+    async function fetchSingleTtsPartUrl(chunkText) {
+      const ttsUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
+      const voiceName = document.getElementById('radioVoice')?.value || 'Kore';
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const res = await fetch(ttsUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: chunkText }] }],
+            generationConfig: {
+              responseModalities: ['AUDIO'],
+              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } }
+            }
+          })
+        });
+        const data = await res.json();
+        const audioPart = data?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData && p.inlineData.data);
+        if (res.ok && audioPart) {
+          const wavBlob = pcm16ChunksToWavBlob([audioPart.inlineData.data], 24000);
+          return URL.createObjectURL(wavBlob);
+        }
+        if (attempt === 0 && (res.status === 429 || res.status === 503)) {
+          await new Promise((r) => setTimeout(r, 1800));
+          continue;
+        }
+        throw new Error((data.error && data.error.message) || 'TTS unavailable');
+      }
+    }
+
+    async function prefetchNextTtsPart(nextIdx) {
+      if (nextIdx >= ttsChunks.length || ttsPartUrls[nextIdx] || !apiKey.trim()) return;
+      try {
+        ttsPartUrls[nextIdx] = await fetchSingleTtsPartUrl(ttsChunks[nextIdx]);
+      } catch (e) {}
+    }
+
+    async function playTtsPartAt(idx) {
+      const audio = document.getElementById('radioAudioPlayer');
+      const rate = parseFloat(document.getElementById('radioSpeed').value) || 0.95;
+      if (!audio || idx >= ttsChunks.length) {
+        document.getElementById('radioStatusLine').textContent = 'Briefing finished.';
+        return;
+      }
+      ttsChunkIdx = idx;
+      if (!ttsPartUrls[idx]) {
+        document.getElementById('radioStatusLine').textContent = `Loading part ${idx + 1} of ${ttsChunks.length}...`;
+        ttsPartUrls[idx] = await fetchSingleTtsPartUrl(ttsChunks[idx]);
+      }
+      audio.src = ttsPartUrls[idx];
+      audio.playbackRate = rate;
+      audio.classList.remove('hidden');
+      registerMediaSession();
+      audio.onended = () => {
+        if (ttsChunkIdx + 1 < ttsChunks.length) {
+          playTtsPartAt(ttsChunkIdx + 1).catch(() => {
+            document.getElementById('radioStatusLine').textContent = 'Finished available parts.';
+          });
+        } else {
+          document.getElementById('radioStatusLine').textContent = 'Briefing finished.';
+        }
+      };
+      await audio.play();
+      document.getElementById('radioStatusLine').textContent = `Playing part ${idx + 1}/${ttsChunks.length} at ${rate}x (continues when screen sleeps).`;
+      prefetchNextTtsPart(idx + 1);
     }
 
     async function playRadioScript() {
@@ -937,27 +999,27 @@ Return ONLY valid JSON array of 20 objects:
       const audio = document.getElementById('radioAudioPlayer');
       const rate = parseFloat(document.getElementById('radioSpeed').value) || 0.95;
 
-      if (audio && cachedAudioForScript === currentRadioScript && cachedAudioBlobUrl && audio.src) {
+      // Resume paused native audio immediately
+      if (audio && cachedAudioForScript === currentRadioScript && audio.src && audio.paused && audio.currentTime > 0 && !audio.ended) {
         audio.playbackRate = rate;
         audio.classList.remove('hidden');
         registerMediaSession();
         audio.play().catch(() => {});
-        document.getElementById('radioStatusLine').textContent = `Background audio playing at ${rate}x (continues when screen sleeps).`;
+        document.getElementById('radioStatusLine').textContent = `Playing part ${ttsChunkIdx + 1}/${ttsChunks.length} at ${rate}x (continues when screen sleeps).`;
         return;
       }
 
+      // 1. Stream Part 1 immediately (<3s, stays inside user gesture) & prefetch Parts 2..N in background
       if (apiKey.trim() && audio) {
-        document.getElementById('radioStatusLine').textContent = 'Preparing background audio stream...';
+        document.getElementById('radioStatusLine').textContent = 'Starting background audio...';
         try {
-          if (cachedAudioBlobUrl) URL.revokeObjectURL(cachedAudioBlobUrl);
-          cachedAudioBlobUrl = await fetchTtsAudioBlobUrl(currentRadioScript);
-          cachedAudioForScript = currentRadioScript;
-          audio.src = cachedAudioBlobUrl;
-          audio.playbackRate = rate;
-          audio.classList.remove('hidden');
-          registerMediaSession();
-          await audio.play();
-          document.getElementById('radioStatusLine').textContent = `Background audio playing at ${rate}x (continues when screen sleeps).`;
+          if (cachedAudioForScript !== currentRadioScript) {
+            Object.values(ttsPartUrls).forEach((u) => { try { URL.revokeObjectURL(u); } catch (e) {} });
+            ttsPartUrls = {};
+            ttsChunks = splitScriptForTts(currentRadioScript, 3400);
+            cachedAudioForScript = currentRadioScript;
+          }
+          await playTtsPartAt(0);
           return;
         } catch (e) {}
       }
