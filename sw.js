@@ -1,4 +1,4 @@
-const CACHE_NAME = 'upsc-lbsnaa-v20';
+const CACHE_NAME = 'upsc-lbsnaa-v22';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (event) => {
