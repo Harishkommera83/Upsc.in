@@ -229,14 +229,8 @@
               </button>
             </div>
           </div>
-          <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
-            <div id="radioStatusLine" class="text-xs text-indigo-200">Press Play to listen at 0.95x pace.</div>
-            <label class="inline-flex items-center gap-1.5 text-xs text-indigo-200 cursor-pointer">
-              <input id="chkKeepAwake" type="checkbox" checked class="rounded border-indigo-400" />
-              <span>Keep screen awake</span>
-            </label>
-          </div>
-          <audio id="bgKeepAliveAudio" loop class="hidden"></audio>
+          <div id="radioStatusLine" class="text-xs text-indigo-200 pt-1">Press Play for background audio at 0.95x pace.</div>
+          <audio id="radioAudioPlayer" class="w-full h-8 hidden" controls></audio>
         </div>
       </div>
 
@@ -422,7 +416,7 @@
       } catch (e) {}
       const { todayStr, rangeLabel } = getLastTwoDays();
       const hdrDateEl = document.getElementById('radioHeaderDate');
-      if (hdrDateEl) hdrDateEl.textContent = `Today: ${todayStr} · Window: ${rangeLabel}`;
+      if (hdrDateEl) hdrDateEl.textContent = `Date: ${todayStr}`;
       updateApiBadge();
       renderChecklistAll();
       renderRadioArchiveSelect();
@@ -834,46 +828,14 @@ Return ONLY valid JSON array of 20 objects:
       showToast('Loaded sample UPSC Prelims questions.');
     }
 
-    // --- DAILY NEWS RADIO (BACKGROUND KEEP-ALIVE + MEDIA SESSION + CHUNKED TTS) ---
-    let radioWakeLock = null;
+    // --- DAILY NEWS RADIO (TRUE BACKGROUND <AUDIO> STREAM + MEDIA SESSION) ---
     let radioQueue = [];
     let radioQueueIdx = 0;
     let radioIsPlaying = false;
+    let cachedAudioBlobUrl = '';
+    let cachedAudioForScript = '';
 
-    function buildSilentWavUrl() {
-      // 1-second silent PCM WAV data URI so mobile browsers register active media playback
-      const sampleRate = 8000, numSamples = 8000;
-      const buf = new ArrayBuffer(44 + numSamples);
-      const v = new DataView(buf);
-      const wr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
-      wr(0, 'RIFF'); v.setUint32(4, 36 + numSamples, true); wr(8, 'WAVE');
-      wr(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-      v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
-      wr(36, 'data'); v.setUint32(40, numSamples, true);
-      for (let i = 0; i < numSamples; i++) v.setUint8(44 + i, 128);
-      return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
-    }
-
-    async function acquireWakeLock() {
-      const chk = document.getElementById('chkKeepAwake');
-      if (chk && chk.checked && 'wakeLock' in navigator) {
-        try { radioWakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
-      }
-    }
-
-    function releaseWakeLock() {
-      if (radioWakeLock) {
-        try { radioWakeLock.release(); } catch (e) {}
-        radioWakeLock = null;
-      }
-    }
-
-    function startBgAudioAndMediaSession() {
-      const audio = document.getElementById('bgKeepAliveAudio');
-      if (audio) {
-        if (!audio.src) audio.src = buildSilentWavUrl();
-        audio.play().catch(() => {});
-      }
+    function registerMediaSession() {
       if ('mediaSession' in navigator) {
         try {
           navigator.mediaSession.metadata = new MediaMetadata({
@@ -888,20 +850,12 @@ Return ONLY valid JSON array of 20 objects:
           navigator.mediaSession.setActionHandler('stop', () => stopSpeech());
         } catch (e) {}
       }
-      acquireWakeLock();
-    }
-
-    function stopBgAudioAndMediaSession() {
-      const audio = document.getElementById('bgKeepAliveAudio');
-      if (audio) { try { audio.pause(); } catch (e) {} }
-      if ('mediaSession' in navigator) {
-        try { navigator.mediaSession.playbackState = 'none'; } catch (e) {}
-      }
-      releaseWakeLock();
     }
 
     function pauseRadioScript() {
       radioIsPlaying = false;
+      const audio = document.getElementById('radioAudioPlayer');
+      if (audio && !audio.paused) audio.pause();
       if ('speechSynthesis' in window) window.speechSynthesis.pause();
       if ('mediaSession' in navigator) {
         try { navigator.mediaSession.playbackState = 'paused'; } catch (e) {}
@@ -913,8 +867,15 @@ Return ONLY valid JSON array of 20 objects:
       radioIsPlaying = false;
       radioQueue = [];
       radioQueueIdx = 0;
+      const audio = document.getElementById('radioAudioPlayer');
+      if (audio) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-      stopBgAudioAndMediaSession();
+      if ('mediaSession' in navigator) {
+        try { navigator.mediaSession.playbackState = 'none'; } catch (e) {}
+      }
       const st = document.getElementById('radioStatusLine');
       if (st) st.textContent = 'Stopped.';
     }
@@ -923,7 +884,6 @@ Return ONLY valid JSON array of 20 objects:
       if (!radioIsPlaying || radioQueueIdx >= radioQueue.length) {
         if (radioIsPlaying) {
           radioIsPlaying = false;
-          stopBgAudioAndMediaSession();
           document.getElementById('radioStatusLine').textContent = 'Briefing finished.';
         }
         return;
@@ -932,45 +892,84 @@ Return ONLY valid JSON array of 20 objects:
       const utter = new SpeechSynthesisUtterance(chunk);
       utter.rate = parseFloat(document.getElementById('radioSpeed').value) || 0.95;
       utter.lang = 'en-IN';
-      utter.onend = () => {
-        if (!radioIsPlaying) return;
-        radioQueueIdx += 1;
-        const activeDateKey = document.getElementById('radioDateSelect')?.value;
+      utter.onend = () => { if (radioIsPlaying) { radioQueueIdx += 1; speakNextChunk(); } };
+      utter.onerror = () => { if (radioIsPlaying) { radioQueueIdx += 1; speakNextChunk(); } };
+      document.getElementById('radioStatusLine').textContent = `Playing part ${radioQueueIdx + 1}/${radioQueue.length} at ${utter.rate}x...`;
+      window.speechSynthesis.speak(utter);
+    }
+
+    async function fetchTtsAudioBlobUrl(text) {
+      const ttsUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
+      const res = await fetch(ttsUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: text.slice(0, 4500) }] }],
+          generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } }
+          }
+        })
+      });
+      const data = await res.json();
+      const audioPart = data?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData && p.inlineData.data);
+      if (!res.ok || !audioPart) throw new Error('TTS unavailable');
+      const wavBlob = pcm16Base64ToWavBlob(audioPart.inlineData.data, 24000);
+      return URL.createObjectURL(wavBlob);
+    }
+
+    async function playRadioScript() {
+      if (!currentRadioScript) return;
+      const activeDateKey = document.getElementById('radioDateSelect')?.value;
       if (activeDateKey && radioArchive[activeDateKey]) {
         radioArchive[activeDateKey].listened = true;
         radioArchive[activeDateKey].lastPlayedAt = Date.now();
         saveRadioArchive();
       }
-      speakNextChunk();
-      };
-      utter.onerror = () => {
-        if (!radioIsPlaying) return;
-        radioQueueIdx += 1;
-        speakNextChunk();
-      };
-      document.getElementById('radioStatusLine').textContent = `Playing part ${radioQueueIdx + 1}/${radioQueue.length} at ${utter.rate}x...`;
-      window.speechSynthesis.speak(utter);
-    }
 
-    function playRadioScript() {
+      const audio = document.getElementById('radioAudioPlayer');
+      const rate = parseFloat(document.getElementById('radioSpeed').value) || 0.95;
+
+      if (audio && cachedAudioForScript === currentRadioScript && cachedAudioBlobUrl && audio.src) {
+        audio.playbackRate = rate;
+        audio.classList.remove('hidden');
+        registerMediaSession();
+        audio.play().catch(() => {});
+        document.getElementById('radioStatusLine').textContent = `Background audio playing at ${rate}x (continues when screen sleeps).`;
+        return;
+      }
+
+      if (apiKey.trim() && audio) {
+        document.getElementById('radioStatusLine').textContent = 'Preparing background audio stream...';
+        try {
+          if (cachedAudioBlobUrl) URL.revokeObjectURL(cachedAudioBlobUrl);
+          cachedAudioBlobUrl = await fetchTtsAudioBlobUrl(currentRadioScript);
+          cachedAudioForScript = currentRadioScript;
+          audio.src = cachedAudioBlobUrl;
+          audio.playbackRate = rate;
+          audio.classList.remove('hidden');
+          registerMediaSession();
+          await audio.play();
+          document.getElementById('radioStatusLine').textContent = `Background audio playing at ${rate}x (continues when screen sleeps).`;
+          return;
+        } catch (e) {}
+      }
+
       if (!('speechSynthesis' in window)) {
         showToast('Speech synthesis is not supported in this browser.');
         return;
       }
-      if (!currentRadioScript) return;
-      if (window.speechSynthesis.paused && radioIsPlaying === false && radioQueue.length > 0) {
+      if (window.speechSynthesis.paused && !radioIsPlaying && radioQueue.length > 0) {
         radioIsPlaying = true;
         window.speechSynthesis.resume();
-        startBgAudioAndMediaSession();
+        registerMediaSession();
         return;
       }
       window.speechSynthesis.cancel();
-      // Split into sentence chunks (~180 chars max) to prevent mobile Chrome 15s cutoff
-      radioQueue = currentRadioScript.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) || [currentRadioScript];
-      radioQueue = radioQueue.map((s) => s.trim()).filter(Boolean);
+      radioQueue = (currentRadioScript.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) || [currentRadioScript]).map((s) => s.trim()).filter(Boolean);
       radioQueueIdx = 0;
       radioIsPlaying = true;
-      startBgAudioAndMediaSession();
+      registerMediaSession();
       speakNextChunk();
     }
 
@@ -1041,7 +1040,7 @@ Return ONLY valid JSON array of 20 objects:
         const prompt = `Prepare a comprehensive, minimum 15-minute UPSC CSE-level Daily Current Affairs Audio Briefing${topics ? ` focusing on: ${topics}` : ' covering 5 to 10 high-importance GS I–IV articles ranked by UPSC exam relevance'} strictly from the last 2 days (${yesterdayStr} and ${todayStr}).${newsBlock}
 IMPORTANT FOR AUDIO & DEPTH:
 1. Select 5 to 10 high-importance articles (never fewer than 5 when available) across Polity, Economy, IR, Environment, Sci-Tech, and Governance.
-2. Start the spokenScript by clearly saying the date ("Today is ${todayStr}. Here is your UPSC Daily News Radio covering updates from ${yesterdayStr} and ${todayStr}"), and before each article explicitly speak its date.
+2. Start the spokenScript by clearly saying the date ("Here is your UPSC Daily News Radio for ${todayStr}."), and before each article speak its date.
 3. Make the spokenScript thorough and unhurried (~2,000 to 2,400 words so it plays for at least 15 minutes at 0.95x pace), covering for every article: what happened, why it matters for UPSC, constitutional Articles/Acts/Committees, concrete Mains examples, and Prelims/Mains takeaways—with no markdown symbols or raw URLs.
 Return ONLY valid JSON:
 {
@@ -1066,7 +1065,7 @@ Return ONLY valid JSON:
             const spokenParts = topItems.map((it, idx) => `Update ${idx + 1}, dated ${it.date}, from ${it.source}. ${it.title}. ${it.desc}`);
             parsed = {
               headline: `UPSC Live Feed Radio · ${todayStr}`,
-              spokenScript: `Today is ${todayStr}. Here is your UPSC Daily News Radio covering updates from ${yesterdayStr} and ${todayStr}. ` + spokenParts.join(' '),
+              spokenScript: `Here is your UPSC Daily News Radio for ${todayStr}. ` + spokenParts.join(' '),
               sections: topItems.map((it) => ({
                 date: it.date,
                 paper: it.source,
@@ -1081,7 +1080,7 @@ Return ONLY valid JSON:
         }
         radioArchive[todayKey] = {
           dateKey: todayKey,
-          displayDate: `${todayStr} (${rangeLabel})`,
+          displayDate: todayStr,
           headline: parsed.headline,
           spokenScript: parsed.spokenScript,
           sections: parsed.sections,
