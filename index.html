@@ -546,24 +546,37 @@
       throw new Error(lastErr);
     }
 
+    function getLastTwoDays() {
+      const now = new Date();
+      const yest = new Date(now.getTime() - 86400000);
+      const fmt = (d) => d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+      return { todayStr: fmt(now), yesterdayStr: fmt(yest), rangeLabel: `${fmt(yest)} – ${fmt(now)}` };
+    }
+
     // --- PRELIMS QUIZ ---
-    function renderQuizQuestions(sources = []) {
+    function renderQuizQuestions(sources = [], dateBanner = '') {
       const container = document.getElementById('quizContainer');
       container.innerHTML = '';
-      if (sources.length) {
+      if (dateBanner || sources.length) {
         const srcBox = document.createElement('div');
-        srcBox.className = 'bg-white rounded-2xl border border-slate-200 p-3.5 shadow-sm text-xs text-slate-600';
-        srcBox.innerHTML = '<span class="font-bold text-slate-800">Live Web Sources: </span>' + sources.map((s) => `<a href="${escapeHtml(s.uri)}" target="_blank" rel="noopener noreferrer" class="text-indigo-700 underline mr-2.5">${escapeHtml(s.title)}</a>`).join('');
+        srcBox.className = 'bg-white rounded-2xl border border-slate-200 p-3.5 shadow-sm text-xs text-slate-600 space-y-1';
+        const dHtml = dateBanner ? `<div class="font-bold text-indigo-800">Current Affairs Window: ${escapeHtml(dateBanner)}</div>` : '';
+        const sHtml = sources.length ? `<div><span class="font-bold text-slate-800">Live Web Sources: </span>${sources.map((s) => `<a href="${escapeHtml(s.uri)}" target="_blank" rel="noopener noreferrer" class="text-indigo-700 underline mr-2.5">${escapeHtml(s.title)}</a>`).join('')}</div>` : '';
+        srcBox.innerHTML = dHtml + sHtml;
         container.appendChild(srcBox);
       }
       updateQuizScore();
       activeQuiz.forEach((item, idx) => {
         const card = document.createElement('div');
         card.className = 'bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-2.5';
+        const dateBadge = item.date ? `<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 text-indigo-700">${escapeHtml(item.date)}</span>` : '';
         card.innerHTML = `
-          <div class="flex items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center justify-between gap-2">
             <span class="text-xs font-bold text-indigo-700">Question ${idx + 1} of ${activeQuiz.length}</span>
-            <span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600">${escapeHtml(item.tag || 'UPSC Prelims')}</span>
+            <div class="flex items-center gap-1.5">
+              ${dateBadge}
+              <span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600">${escapeHtml(item.tag || 'UPSC Prelims')}</span>
+            </div>
           </div>
           <div class="text-sm font-semibold text-slate-900 whitespace-pre-line">${escapeHtml(item.q)}</div>
         `;
@@ -613,16 +626,17 @@
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> Generating...';
       try {
-        const prompt = `Generate a 20-question UPSC CSE Prelims GS Paper I mock set${theme ? ` focused on "${theme}"` : ' blending Polity, Economy, Environment, Modern/Ancient History, Geography, Sci-Tech & Current Affairs'}. Match real UPSC Prelims difficulty (multi-statement, Statement-I/II, "how many pairs" elimination).
+        const { todayStr, yesterdayStr, rangeLabel } = getLastTwoDays();
+        const prompt = `Use Google Search to fetch ONLY current affairs from the LAST 2 DAYS (${yesterdayStr} and ${todayStr}) from The Hindu, The Indian Express, PIB, and PRS India. DO NOT include older news from earlier weeks or months.
+Generate a 20-question UPSC CSE Prelims GS Paper I mock set${theme ? ` focused on "${theme}"` : ''} blending those last-2-days current affairs with static UPSC PYQ-style questions (multi-statement, Statement-I/II, "how many pairs" elimination).
+For each question, include a "date" field showing the exact news date (${todayStr} or ${yesterdayStr}) for current affairs items, or "Static / PYQ" for static items.
 Return ONLY valid JSON array of 20 objects:
-[{"tag":"Polity / PYQ-style","q":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answerIndex":0,"explanation":"..."}]`;
-        const todayDate = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
-        const groundedPrompt = `Use Google Search to check today's (${todayDate}) UPSC-relevant current affairs from The Hindu, The Indian Express, PIB, and PRS India, plus recent UPSC CSE Prelims PYQ trends.\n` + prompt;
-        const { text: raw, sources } = await callGemini([{ text: groundedPrompt }], true, true);
+[{"date":"${todayStr}","tag":"Polity / Current Affairs","q":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answerIndex":0,"explanation":"..."}]`;
+        const { text: raw, sources } = await callGemini([{ text: prompt }], true, true);
         activeQuiz = extractJson(raw);
         quizAnswers = {};
-        renderQuizQuestions(sources);
-        showToast('20-MCQ UPSC Prelims set ready (live web grounded)!');
+        renderQuizQuestions(sources, rangeLabel);
+        showToast(`20-MCQ set ready (${rangeLabel})!`);
       } catch (e) {
         showToast(e.message || 'Could not generate quiz.');
       } finally {
@@ -678,15 +692,19 @@ Return ONLY valid JSON array of 20 objects:
       window.speechSynthesis.speak(utter);
     }
 
-    function renderRadioOutput(headline, spokenScript, sections, sources = []) {
+    function renderRadioOutput(headline, spokenScript, sections, sources = [], dateBanner = '') {
       currentRadioScript = spokenScript;
       document.getElementById('radioPlayerBox').classList.remove('hidden');
-      document.getElementById('radioHeadline').textContent = headline;
+      document.getElementById('radioHeadline').textContent = dateBanner ? `${headline} (${dateBanner})` : headline;
       document.getElementById('radioTranscriptCard').classList.remove('hidden');
+      const dateHtml = dateBanner ? `<div class="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs font-semibold text-amber-900">Briefing Dates Covered: ${escapeHtml(dateBanner)} (Last 2 Days Only)</div>` : '';
       const srcHtml = sources.length ? `<div class="p-3 rounded-xl bg-indigo-50/60 border border-indigo-100 text-xs text-slate-700"><strong>Live Web Sources: </strong>${sources.map((s) => `<a href="${escapeHtml(s.uri)}" target="_blank" rel="noopener noreferrer" class="text-indigo-700 underline mr-2.5">${escapeHtml(s.title)}</a>`).join('')}</div>` : '';
-      document.getElementById('radioTranscriptBody').innerHTML = srcHtml + (sections || []).map((sec) => `
+      document.getElementById('radioTranscriptBody').innerHTML = dateHtml + srcHtml + (sections || []).map((sec) => `
         <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-          <div class="text-xs font-bold uppercase text-indigo-700">${escapeHtml(sec.paper)}</div>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="text-xs font-bold uppercase text-indigo-700">${escapeHtml(sec.paper)}</span>
+            ${sec.date ? `<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-100 text-indigo-800">${escapeHtml(sec.date)}</span>` : ''}
+          </div>
           <div class="font-bold text-slate-900">${escapeHtml(sec.title)}</div>
           <p class="text-slate-700">${escapeHtml(sec.explanation)}</p>
           <div class="text-xs text-slate-500 pt-1"><strong>UPSC Linkage:</strong> ${escapeHtml(sec.linkage)}</div>
@@ -700,21 +718,22 @@ Return ONLY valid JSON array of 20 objects:
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> Preparing...';
       try {
-        const prompt = `Prepare a UPSC CSE-level Daily Current Affairs Audio Briefing${topics ? ` covering: ${topics}` : ' covering 4 high-yield GS I–IV themes (Polity/Governance, Economy, Environment/IR, Sci-Tech)'}.
+        const { todayStr, yesterdayStr, rangeLabel } = getLastTwoDays();
+        const prompt = `Use Google Search to fetch ONLY news and editorials published in the LAST 2 DAYS (${yesterdayStr} and ${todayStr}) from The Hindu, The Indian Express, PIB, and PRS India. STRICTLY DO NOT include any older news from earlier days or months.
+Prepare a UPSC CSE-level Daily Current Affairs Audio Briefing${topics ? ` covering: ${topics}` : ' covering 4 high-yield GS I–IV updates from these last 2 days'}.
+Mention the exact date (${todayStr} or ${yesterdayStr}) inside the spoken script and in every section's "date" field.
 Return ONLY valid JSON:
 {
-  "headline": "Short title for today's briefing",
-  "spokenScript": "Smooth, clear spoken-word radio script (400-600 words, no markdown symbols or URLs) explaining what happened, constitutional/static linkages, concrete examples, and Prelims/Mains takeaways.",
+  "headline": "UPSC Daily News Radio",
+  "spokenScript": "Smooth, clear spoken-word radio script (450-650 words, no markdown symbols or URLs) stating the dates (${yesterdayStr} and ${todayStr}), explaining what happened, constitutional/static linkages, concrete examples, and Prelims/Mains takeaways.",
   "sections": [
-    {"paper": "GS Paper II · Polity", "title": "...", "explanation": "...", "linkage": "Articles / Committees / Precedents"}
+    {"date": "${todayStr}", "paper": "GS Paper II · Polity", "title": "...", "explanation": "...", "linkage": "Articles / Committees / Precedents"}
   ]
 }`;
-        const todayDate = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
-        const groundedPrompt = `Use Google Search to fetch today's (${todayDate}) major UPSC-relevant news & editorials from The Hindu, The Indian Express, PIB, and PRS India.\n` + prompt;
-        const { text: raw, sources } = await callGemini([{ text: groundedPrompt }], true, true);
+        const { text: raw, sources } = await callGemini([{ text: prompt }], true, true);
         const parsed = extractJson(raw);
-        renderRadioOutput(parsed.headline, parsed.spokenScript, parsed.sections, sources);
-        showToast('UPSC News Radio briefing ready (live web grounded)!');
+        renderRadioOutput(parsed.headline, parsed.spokenScript, parsed.sections, sources, rangeLabel);
+        showToast(`UPSC News Radio ready (${rangeLabel})!`);
       } catch (e) {
         showToast(e.message || 'Could not generate radio briefing.');
       } finally {
