@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UPSC · LBSNAA — Study Checklist, Mains Agent, Prelims Quiz &amp; News Radio</title>
+  <meta name="theme-color" content="#1e1b4b" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/png" href="icon-192.png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="UPSC LBSNAA" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: #f8fafc; color: #0f172a; }
+    .tab-btn.active { background-color: #1e1b4b; color: #ffffff; }
+    .session-done { background-color: #f0fdf4; border-color: #86efac; }
+    .custom-checkbox { width: 22px; height: 22px; border-radius: 6px; border: 2px solid #cbd5e1; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; background: #fff; }
+    .custom-checkbox.checked { background: #16a34a; border-color: #16a34a; color: #fff; }
+    .spinner { border: 2.5px solid #e2e8f0; border-top-color: #4f46e5; border-radius: 50%; width: 16px; height: 16px; animation: spin 0.7s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="min-h-screen antialiased">
+  <div class="max-w-4xl mx-auto px-4 py-5 sm:px-6 sm:py-6">
+    <!-- Header -->
+    <header class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-950 text-amber-300">
+            UPSC · LBSNAA 2027
+          </span>
+          <span id="apiStatusBadge" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+            API Key Needed
+          </span>
+        </div>
+        <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 mt-1">
+          Daily Checklist, Quiz, Radio &amp; Mains Agent
+        </h1>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <button id="btnOpenSettings" type="button" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm">
+          Gemini API Key
+        </button>
+        <button id="btnExportJson" type="button" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm">
+          Backup Data
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Navigation -->
+    <nav class="flex flex-wrap items-center gap-1.5 bg-slate-200/70 p-1 rounded-xl mb-5">
+      <button type="button" data-tab="checklist" class="tab-btn active flex-1 sm:flex-none px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition">
+        Checklist
+      </button>
+      <button type="button" data-tab="quiz" class="tab-btn flex-1 sm:flex-none px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold text-slate-700 hover:text-slate-900 transition">
+        Prelims Quiz
+      </button>
+      <button type="button" data-tab="radio" class="tab-btn flex-1 sm:flex-none px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold text-slate-700 hover:text-slate-900 transition">
+        News Radio
+      </button>
+      <button type="button" data-tab="evaluator" class="tab-btn flex-1 sm:flex-none px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold text-slate-700 hover:text-slate-900 transition">
+        Mains Agent
+      </button>
+    </nav>
+
+    <!-- TAB 1: DAILY CHECKLIST & RECORDS -->
+    <main id="tab-checklist" class="space-y-4">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div class="bg-white rounded-xl border border-slate-200 p-3 shadow-sm">
+          <div class="text-xs font-medium text-slate-500">Selected Day</div>
+          <div id="kpiSessions" class="text-lg font-bold text-slate-900 mt-0.5">0 / 7</div>
+          <div id="kpiPct" class="text-xs font-medium text-emerald-600">0% done</div>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-200 p-3 shadow-sm">
+          <div class="text-xs font-medium text-slate-500">Study Hours</div>
+          <div id="kpiHours" class="text-lg font-bold text-slate-900 mt-0.5">0.0 h</div>
+          <div class="text-xs text-slate-500">of 12.9 h target</div>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-200 p-3 shadow-sm">
+          <div class="text-xs font-medium text-slate-500">Active Streak</div>
+          <div id="kpiStreak" class="text-lg font-bold text-indigo-600 mt-0.5">1 day</div>
+          <div class="text-xs text-slate-500">days logged</div>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-200 p-3 shadow-sm">
+          <div class="text-xs font-medium text-slate-500">Overall Avg</div>
+          <div id="kpiAvg" class="text-lg font-bold text-slate-900 mt-0.5">0%</div>
+          <div id="kpiTotalDays" class="text-xs text-slate-500">1 day recorded</div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-sm space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+          <div class="flex items-center gap-2">
+            <button id="btnPrevDay" type="button" class="px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-bold">&lsaquo;</button>
+            <input id="datePicker" type="date" class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs sm:text-sm font-semibold bg-slate-50" />
+            <button id="btnNextDay" type="button" class="px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-bold">&rsaquo;</button>
+            <button id="btnToday" type="button" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700">Today</button>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="btnMarkAll" type="button" class="px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100">Mark All</button>
+            <button id="btnClearDay" type="button" class="px-3 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200">Reset</button>
+          </div>
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between text-xs font-medium text-slate-600 mb-1.5">
+            <span id="dayLabelText">Thursday, Nov 26, 2026</span>
+            <span id="progressLabel">0 of 7 sessions · 0.0 / 12.9 hrs</span>
+          </div>
+          <div class="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
+            <div id="progressBar" class="h-full bg-emerald-500 rounded-full transition-all duration-300" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <div id="sessionList" class="space-y-2"></div>
+
+        <div class="pt-3 border-t border-slate-100">
+          <label for="dailyNotes" class="block text-xs font-semibold text-slate-600 mb-1">End-of-Day Targets / Topics Covered</label>
+          <textarea id="dailyNotes" rows="2" placeholder="Log today's topics, Prelims accuracy, or Mains revisions..." class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-sm">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-bold text-slate-900">Study Hours Trend</h2>
+          <button id="btnExportCsv" type="button" class="px-3 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200">Export CSV</button>
+        </div>
+        <div class="relative h-52">
+          <canvas id="hoursChart"></canvas>
+        </div>
+      </div>
+    </main>
+
+    <!-- TAB 2: PRELIMS 20-MCQ QUIZ -->
+    <section id="tab-quiz" class="hidden space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-sm space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 class="text-base font-bold text-slate-900">UPSC CSE 2027 Prelims Quiz</h2>
+            <p class="text-xs text-slate-500">Multi-statement, Statement-I/II &amp; pair-elimination MCQs (+2 / -0.66).</p>
+          </div>
+          <span id="quizScorePill" class="px-3 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-800">Score: 0.00</span>
+        </div>
+
+        <div class="flex flex-col sm:flex-row gap-2">
+          <input id="quizThemeInput" type="text" placeholder="Optional focus (leave blank for mixed GS + Current Affairs 20-MCQ set)..." class="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          <div class="flex gap-2">
+            <button id="btnGenQuiz20" type="button" class="px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700">
+              Generate 20 MCQs
+            </button>
+            <button id="btnSampleQuiz" type="button" class="px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200">
+              Sample Set
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="quizContainer" class="space-y-3"></div>
+    </section>
+
+    <!-- TAB 3: DAILY NEWS RADIO (UPSC LEVEL) -->
+    <section id="tab-radio" class="hidden space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-sm space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 class="text-base font-bold text-slate-900">Daily UPSC News Radio</h2>
+            <p class="text-xs text-slate-500">Listen to GS I–IV current affairs updates with constitutional &amp; Mains/Prelims explanations.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <label for="radioSpeed" class="text-xs font-semibold text-slate-600">Pace:</label>
+            <select id="radioSpeed" class="px-2 py-1 rounded-lg border border-slate-200 text-xs font-semibold bg-slate-50">
+              <option value="0.85">0.85x (Slow)</option>
+              <option value="0.95" selected>0.95x (Calm Jogging)</option>
+              <option value="1.05">1.05x (Normal)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex flex-col sm:flex-row gap-2">
+          <input id="radioTopicInput" type="text" placeholder="Enter today's news topics or leave blank for a full UPSC daily briefing..." class="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          <div class="flex gap-2">
+            <button id="btnGenRadio" type="button" class="px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700">
+              Generate Briefing
+            </button>
+            <button id="btnSampleRadio" type="button" class="px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200">
+              Sample Radio
+            </button>
+          </div>
+        </div>
+
+        <!-- Audio Player Controls -->
+        <div id="radioPlayerBox" class="hidden p-4 rounded-xl bg-indigo-950 text-white space-y-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-[11px] uppercase tracking-wider text-amber-300 font-bold">On Air · UPSC Audio Briefing</div>
+              <div id="radioHeadline" class="text-sm font-semibold mt-0.5">Ready to play</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="btnRadioPlay" type="button" class="px-3.5 py-1.5 rounded-lg bg-amber-400 text-indigo-950 text-xs font-bold hover:bg-amber-300">
+                Play
+              </button>
+              <button id="btnRadioPause" type="button" class="px-3 py-1.5 rounded-lg bg-white/15 text-white text-xs font-semibold hover:bg-white/25">
+                Pause
+              </button>
+              <button id="btnRadioStop" type="button" class="px-3 py-1.5 rounded-lg bg-white/15 text-white text-xs font-semibold hover:bg-white/25">
+                Stop
+              </button>
+            </div>
+          </div>
+          <div id="radioStatusLine" class="text-xs text-indigo-200">Press Play to listen at 0.95x pace.</div>
+        </div>
+      </div>
+
+      <div id="radioTranscriptCard" class="hidden bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-sm space-y-3">
+        <h3 class="text-sm font-bold text-slate-900">Briefing Notes &amp; UPSC Linkages</h3>
+        <div id="radioTranscriptBody" class="space-y-3 text-sm text-slate-700 leading-relaxed"></div>
+      </div>
+    </section>
+
+    <!-- TAB 4: MAINS ANSWER EVALUATOR AGENT -->
+    <section id="tab-evaluator" class="hidden space-y-4">
+      <div class="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-sm space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 class="text-base font-bold text-slate-900">Mains Answer Evaluator (Topper-Calibrated)</h2>
+            <p class="text-xs text-slate-500">Upload 2–3+ handwritten answer pages or paste text for UPSC examiner grading.</p>
+          </div>
+          <button id="btnDemoEval" type="button" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100">
+            Try Sample
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <select id="evalPaper" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg-slate-50">
+            <option value="GS Paper I">GS Paper I (History, Society, Geography)</option>
+            <option value="GS Paper II">GS Paper II (Polity, Governance, IR)</option>
+            <option value="GS Paper III">GS Paper III (Economy, Env, Sci-Tech)</option>
+            <option value="GS Paper IV">GS Paper IV (Ethics &amp; Case Studies)</option>
+            <option value="Optional">Optional Paper</option>
+            <option value="Essay">Essay Paper</option>
+          </select>
+          <select id="evalMarks" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg-slate-50">
+            <option value="10 marks (150 words)">10 Marks · 150 Words (2 Pages)</option>
+            <option value="15 marks (250 words)">15 Marks · 250 Words (3 Pages)</option>
+            <option value="20 marks (300 words)">20 Marks · 300 Words</option>
+          </select>
+        </div>
+
+        <textarea id="evalQuestion" rows="2" placeholder="Paste the UPSC Mains question..." class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+        <textarea id="evalAnswer" rows="4" placeholder="Type your answer OR upload multiple handwritten pages below..." class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+
+        <div class="space-y-2">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex flex-wrap items-center gap-2">
+              <label for="evalImageInput" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 cursor-pointer">
+                Upload Answer Pages (Multi-Page)
+              </label>
+              <input id="evalImageInput" type="file" accept="image/*" multiple class="hidden" />
+              <span id="imageNameLabel" class="text-xs text-slate-500">No pages attached</span>
+              <button id="btnClearImage" type="button" class="hidden text-xs font-medium text-rose-600 hover:underline">Clear all</button>
+            </div>
+            <button id="btnEvaluate" type="button" class="px-5 py-2.5 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700">
+              Evaluate Answer
+            </button>
+          </div>
+          <div id="attachedPagesList" class="hidden flex flex-wrap gap-2"></div>
+        </div>
+      </div>
+
+      <div id="evalResultCard" class="hidden bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-sm space-y-3">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+          <h3 id="resPaperTitle" class="text-base font-bold text-slate-900">Evaluation Report</h3>
+          <span id="resScoreBadge" class="px-3 py-1 rounded-xl bg-indigo-50 text-indigo-700 font-bold text-sm">— / 10</span>
+        </div>
+        <div id="resBody" class="space-y-3 text-sm text-slate-700"></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="fixed inset-0 z-50 hidden bg-slate-900/50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-5 shadow-xl space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-bold text-slate-900">Connect Gemini API Key</h3>
+        <button id="btnCloseSettings" type="button" class="text-slate-400 hover:text-slate-600 text-lg font-bold">&times;</button>
+      </div>
+      <p class="text-xs text-slate-600 leading-relaxed">
+        Paste your free key from <strong>Google AI Studio</strong> (<code>aistudio.google.com</code>) to power live Prelims 20-MCQ sets, Daily News Radio briefings, and Mains answer evaluations. Stored only in this browser.
+      </p>
+      <input id="apiKeyInput" type="password" placeholder="AIza..." class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+      <div class="flex justify-end gap-2">
+        <button id="btnRemoveKey" type="button" class="px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50">Clear</button>
+        <button id="btnSaveKey" type="button" class="px-4 py-2 rounded-xl text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700">Save Key</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="fixed bottom-4 right-4 z-50 hidden bg-slate-900 text-white text-xs font-medium px-4 py-2.5 rounded-xl shadow-lg"></div>
+
+  <script>
+    const TODAY_STR = '2026-11-26';
+    const STORAGE_KEY = 'upsc_daily_study_records_v1';
+    const KEY_STORAGE = 'upsc_agent_gemini_key_v1';
+    const GEMINI_MODELS = ['gemini-4-hydrogen', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
+
+    const SESSIONS = [
+      { id: '1', time: '6:10 – 7:30 AM', label: 'New Books / Static', minutes: 80, durationText: '1 hr 20 min', tag: 'Static' },
+      { id: '2', time: '9:00 – 11:00 AM', label: 'Newspaper', minutes: 120, durationText: '2 hrs (adjusted)', tag: 'Current Affairs' },
+      { id: '3', time: '11:00 AM – 1:00 PM', label: 'GS (General Studies)', minutes: 120, durationText: '2 hrs', tag: 'GS' },
+      { id: '4', time: '2:00 – 5:00 PM', label: 'Mains / Prelims Test + Analysis', minutes: 180, durationText: '3 hrs', tag: 'Testing' },
+      { id: '5', time: '5:15 – 8:00 PM', label: 'Optional Reading', minutes: 165, durationText: '2 hrs 45 min', tag: 'Optional' },
+      { id: '6', time: '9:00 – 10:00 PM', label: 'Optional Writing', minutes: 60, durationText: '1 hr', tag: 'Writing' },
+      { id: '7', time: '10:00 – 10:50 PM', label: 'Active Recall + Revision of past readings', minutes: 50, durationText: '50 min', tag: 'Revision' }
+    ];
+    const TOTAL_MINUTES = SESSIONS.reduce((a, s) => a + s.minutes, 0);
+
+    let state = { selectedDate: TODAY_STR, records: {} };
+    let apiKey = '';
+    let attachedImages = [];
+    let activeQuiz = [];
+    let quizAnswers = {};
+    let hoursChartInstance = null;
+    let currentRadioScript = '';
+
+    function escapeHtml(str) {
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.remove('hidden');
+      clearTimeout(t._timer);
+      t._timer = setTimeout(() => t.classList.add('hidden'), 2800);
+    }
+
+    function loadAll() {
+      try {
+        apiKey = localStorage.getItem(KEY_STORAGE) || '';
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') state.records = parsed;
+        }
+      } catch (e) {}
+      if (!state.records[TODAY_STR]) {
+        state.records[TODAY_STR] = { completed: { '2': true, '3': true }, notes: '' };
+        saveRecords();
+      }
+      updateApiBadge();
+      renderChecklistAll();
+    }
+
+    function saveRecords() {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.records)); } catch (e) {}
+    }
+
+    function updateApiBadge() {
+      const badge = document.getElementById('apiStatusBadge');
+      if (apiKey.trim()) {
+        badge.textContent = 'Agent Ready';
+        badge.className = 'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800';
+      } else {
+        badge.textContent = 'API Key Needed';
+        badge.className = 'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800';
+      }
+    }
+
+    function switchTab(name) {
+      document.querySelectorAll('.tab-btn').forEach((b) => {
+        const active = b.getAttribute('data-tab') === name;
+        b.classList.toggle('active', active);
+        b.classList.toggle('text-slate-700', !active);
+      });
+      ['checklist', 'quiz', 'radio', 'evaluator'].forEach((t) => {
+        document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== name);
+      });
+      if (name === 'checklist') renderHoursChart();
+    }
+
+    // --- CHECKLIST ---
+    function getDayRecord(d) {
+      if (!state.records[d]) state.records[d] = { completed: {}, notes: '' };
+      return state.records[d];
+    }
+
+    function calcDayStats(rec) {
+      const map = (rec && rec.completed) || {};
+      let count = 0, mins = 0;
+      SESSIONS.forEach((s) => { if (map[s.id]) { count += 1; mins += s.minutes; } });
+      return { count, hrs: +(mins / 60).toFixed(1), pct: Math.round((count / SESSIONS.length) * 100) };
+    }
+
+    function shiftDate(dateStr, delta) {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const dt = new Date(y, m - 1, d);
+      dt.setDate(dt.getDate() + delta);
+      return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    }
+
+    function renderChecklistAll() {
+      const rec = getDayRecord(state.selectedDate);
+      const stats = calcDayStats(rec);
+      document.getElementById('kpiSessions').textContent = `${stats.count} / ${SESSIONS.length}`;
+      document.getElementById('kpiPct').textContent = `${stats.pct}% done`;
+      document.getElementById('kpiHours').textContent = `${stats.hrs.toFixed(1)} h`;
+
+      const recorded = Object.keys(state.records).filter((d) => calcDayStats(state.records[d]).count > 0);
+      const avg = recorded.length ? Math.round(recorded.reduce((a, d) => a + calcDayStats(state.records[d]).pct, 0) / recorded.length) : 0;
+      let streak = 0, cur = TODAY_STR;
+      while (state.records[cur] && calcDayStats(state.records[cur]).count > 0) { streak += 1; cur = shiftDate(cur, -1); }
+      document.getElementById('kpiStreak').textContent = `${streak} ${streak === 1 ? 'day' : 'days'}`;
+      document.getElementById('kpiAvg').textContent = `${avg}%`;
+      document.getElementById('kpiTotalDays').textContent = `${recorded.length} ${recorded.length === 1 ? 'day' : 'days'} recorded`;
+
+      document.getElementById('datePicker').value = state.selectedDate;
+      const [y, m, d] = state.selectedDate.split('-').map(Number);
+      document.getElementById('dayLabelText').textContent = new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+      document.getElementById('progressLabel').textContent = `${stats.count} of ${SESSIONS.length} sessions · ${stats.hrs.toFixed(1)} / ${(TOTAL_MINUTES / 60).toFixed(1)} hrs`;
+      document.getElementById('progressBar').style.width = `${stats.pct}%`;
+      document.getElementById('dailyNotes').value = rec.notes || '';
+
+      const listEl = document.getElementById('sessionList');
+      listEl.innerHTML = '';
+      SESSIONS.forEach((s) => {
+        const done = Boolean(rec.completed[s.id]);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `w-full text-left flex items-center justify-between gap-3 p-3 rounded-xl border ${done ? 'session-done' : 'bg-white border-slate-200 hover:border-slate-300'}`;
+        btn.innerHTML = `
+          <div class="flex items-center gap-3 min-w-0">
+            <span class="custom-checkbox ${done ? 'checked' : ''}">${done ? '&#10003;' : ''}</span>
+            <div class="min-w-0">
+              <div class="text-sm font-semibold ${done ? 'line-through text-slate-500' : 'text-slate-900'} truncate">${s.label}</div>
+              <div class="text-xs text-slate-500">${s.time} · ${s.durationText}</div>
+            </div>
+          </div>
+          <span class="shrink-0 px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${done ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}">${s.tag}</span>
+        `;
+        btn.addEventListener('click', () => {
+          rec.completed[s.id] = !rec.completed[s.id];
+          saveRecords();
+          renderChecklistAll();
+        });
+        listEl.appendChild(btn);
+      });
+      renderHoursChart();
+    }
+
+    function renderHoursChart() {
+      if (typeof Chart === 'undefined') return;
+      const dates = Object.keys(state.records).filter((d) => calcDayStats(state.records[d]).count > 0).sort().slice(-14);
+      const ctx = document.getElementById('hoursChart').getContext('2d');
+      if (hoursChartInstance) hoursChartInstance.destroy();
+      hoursChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: dates.length ? dates.map((d) => d.slice(5)) : [TODAY_STR.slice(5)],
+          datasets: [{ label: 'Hours', data: dates.length ? dates.map((d) => calcDayStats(state.records[d]).hrs) : [0], backgroundColor: '#4f46e5', borderRadius: 6, maxBarThickness: 32 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, suggestedMax: 13 } }, plugins: { legend: { display: false } } }
+      });
+    }
+
+    function extractJson(text) {
+      const cleaned = String(text).replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+      try { return JSON.parse(cleaned); } catch (e) {}
+      const arrStart = cleaned.indexOf('[');
+      const objStart = cleaned.indexOf('{');
+      let start = -1, end = -1;
+      if (arrStart !== -1 && (objStart === -1 || arrStart < objStart)) {
+        start = arrStart; end = cleaned.lastIndexOf(']');
+      } else if (objStart !== -1) {
+        start = objStart; end = cleaned.lastIndexOf('}');
+      }
+      if (start !== -1 && end > start) {
+        return JSON.parse(cleaned.slice(start, end + 1));
+      }
+      throw new Error('Could not parse structured response from Gemini.');
+    }
+
+    function extractSources(data) {
+      const chunks = data?.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+      const seen = new Set();
+      const out = [];
+      chunks.forEach((c) => {
+        const uri = c?.web?.uri;
+        const title = c?.web?.title || uri;
+        if (uri && !seen.has(uri)) {
+          seen.add(uri);
+          out.push({ title, uri });
+        }
+      });
+      return out.slice(0, 8);
+    }
+
+    // --- GEMINI API WITH LIVE GOOGLE SEARCH GROUNDING & AUTOMATIC FALLBACK ---
+    async function callGemini(parts, jsonMode = false, useSearch = true) {
+      if (!apiKey.trim()) {
+        document.getElementById('settingsModal').classList.remove('hidden');
+        throw new Error('Please add your Gemini API key first (or use Sample mode).');
+      }
+      const makeBody = (withSearch) => {
+        const b = { contents: [{ role: 'user', parts }] };
+        if (withSearch) {
+          b.tools = [{ google_search: {} }];
+        } else if (jsonMode) {
+          b.generationConfig = { responseMimeType: 'application/json' };
+        }
+        return b;
+      };
+
+      let lastErr = 'All Gemini models are currently busy. Please try again in a moment.';
+      for (let i = 0; i < GEMINI_MODELS.length; i++) {
+        const model = GEMINI_MODELS[i];
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
+        for (const attemptSearch of (useSearch ? [true, false] : [false])) {
+          try {
+            const res = await fetch(url, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(makeBody(attemptSearch))
+            });
+            const data = await res.json();
+            if (res.ok) {
+              const txt = data.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
+              if (txt) return { text: txt, sources: extractSources(data) };
+            }
+            const msg = (data.error && data.error.message) || `HTTP ${res.status}`;
+            lastErr = msg;
+            if (attemptSearch && res.status === 400) continue; // Retry same model without search tool if 400
+            if (res.status === 503 || res.status === 429 || res.status === 404 || /high demand|overloaded|unavailable/i.test(msg)) {
+              await new Promise((r) => setTimeout(r, 500));
+              break; // Try next model
+            }
+            throw new Error(msg);
+          } catch (err) {
+            lastErr = err.message || lastErr;
+          }
+        }
+      }
+      throw new Error(lastErr);
+    }
+
+    // --- PRELIMS QUIZ ---
+    function renderQuizQuestions(sources = []) {
+      const container = document.getElementById('quizContainer');
+      container.innerHTML = '';
+      if (sources.length) {
+        const srcBox = document.createElement('div');
+        srcBox.className = 'bg-white rounded-2xl border border-slate-200 p-3.5 shadow-sm text-xs text-slate-600';
+        srcBox.innerHTML = '<span class="font-bold text-slate-800">Live Web Sources: </span>' + sources.map((s) => `<a href="${escapeHtml(s.uri)}" target="_blank" rel="noopener noreferrer" class="text-indigo-700 underline mr-2.5">${escapeHtml(s.title)}</a>`).join('');
+        container.appendChild(srcBox);
+      }
+      updateQuizScore();
+      activeQuiz.forEach((item, idx) => {
+        const card = document.createElement('div');
+        card.className = 'bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-2.5';
+        card.innerHTML = `
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs font-bold text-indigo-700">Question ${idx + 1} of ${activeQuiz.length}</span>
+            <span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600">${escapeHtml(item.tag || 'UPSC Prelims')}</span>
+          </div>
+          <div class="text-sm font-semibold text-slate-900 whitespace-pre-line">${escapeHtml(item.q)}</div>
+        `;
+        const optsWrap = document.createElement('div');
+        optsWrap.className = 'space-y-1.5';
+        const exp = document.createElement('div');
+        exp.className = 'hidden p-3 rounded-xl bg-slate-50 border border-slate-100 text-xs text-slate-700 leading-relaxed';
+        exp.textContent = item.explanation;
+
+        item.options.forEach((opt, oi) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'w-full text-left px-3 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm hover:bg-slate-50 transition';
+          b.textContent = opt;
+          b.addEventListener('click', () => {
+            if (quizAnswers[idx] !== undefined) return;
+            quizAnswers[idx] = oi;
+            optsWrap.querySelectorAll('button').forEach((btnEl, bi) => {
+              btnEl.disabled = true;
+              if (bi === item.answerIndex) btnEl.className = 'w-full text-left px-3 py-2 rounded-xl border border-emerald-400 bg-emerald-50 text-emerald-900 font-semibold text-xs sm:text-sm';
+              else if (bi === oi) btnEl.className = 'w-full text-left px-3 py-2 rounded-xl border border-rose-400 bg-rose-50 text-rose-900 text-xs sm:text-sm';
+            });
+            exp.classList.remove('hidden');
+            updateQuizScore();
+          });
+          optsWrap.appendChild(b);
+        });
+        card.appendChild(optsWrap);
+        card.appendChild(exp);
+        container.appendChild(card);
+      });
+    }
+
+    function updateQuizScore() {
+      let score = 0;
+      Object.keys(quizAnswers).forEach((k) => {
+        const i = Number(k);
+        if (quizAnswers[i] === activeQuiz[i].answerIndex) score += 2;
+        else score -= 0.66;
+      });
+      document.getElementById('quizScorePill').textContent = `Score: ${score.toFixed(2)}`;
+    }
+
+    async function generatePrelims20() {
+      const theme = document.getElementById('quizThemeInput').value.trim();
+      const btn = document.getElementById('btnGenQuiz20');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Generating...';
+      try {
+        const prompt = `Generate a 20-question UPSC CSE Prelims GS Paper I mock set${theme ? ` focused on "${theme}"` : ' blending Polity, Economy, Environment, Modern/Ancient History, Geography, Sci-Tech & Current Affairs'}. Match real UPSC Prelims difficulty (multi-statement, Statement-I/II, "how many pairs" elimination).
+Return ONLY valid JSON array of 20 objects:
+[{"tag":"Polity / PYQ-style","q":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answerIndex":0,"explanation":"..."}]`;
+        const todayDate = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+        const groundedPrompt = `Use Google Search to check today's (${todayDate}) UPSC-relevant current affairs from The Hindu, The Indian Express, PIB, and PRS India, plus recent UPSC CSE Prelims PYQ trends.\n` + prompt;
+        const { text: raw, sources } = await callGemini([{ text: groundedPrompt }], true, true);
+        activeQuiz = extractJson(raw);
+        quizAnswers = {};
+        renderQuizQuestions(sources);
+        showToast('20-MCQ UPSC Prelims set ready (live web grounded)!');
+      } catch (e) {
+        showToast(e.message || 'Could not generate quiz.');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Generate 20 MCQs';
+      }
+    }
+
+    function loadSampleQuiz() {
+      activeQuiz = [
+        {
+          tag: 'Polity · Statement-I/II',
+          q: 'Consider the following statements regarding the Finance Commission of India:\nStatement-I: The recommendations made by the Finance Commission are advisory in nature and not legally binding on the Union Government.\nStatement-II: Article 280 mandates the President to constitute a Finance Commission every five years or earlier.',
+          options: [
+            'A. Both Statement-I and Statement-II are correct and Statement-II explains Statement-I',
+            'B. Both Statement-I and Statement-II are correct but Statement-II does not explain Statement-I',
+            'C. Statement-I is correct but Statement-II is incorrect',
+            'D. Statement-I is incorrect but Statement-II is correct'
+          ],
+          answerIndex: 1,
+          explanation: 'Both statements are individually correct under constitutional practice and Article 280(1), though Article 280’s periodicity does not explain why the recommendations are advisory.'
+        },
+        {
+          tag: 'Economy · Multi-Statement',
+          q: 'With reference to the Monetary Policy Committee (MPC) in India, consider the following:\n1. It was given statutory backing by amending the RBI Act, 1934.\n2. The Governor of the RBI enjoys a casting vote in case of a tie.\n3. It is a 6-member body headed by the Union Finance Minister.\nHow many of the statements given above are correct?',
+          options: ['A. Only one', 'B. Only two', 'C. All three', 'D. None'],
+          answerIndex: 1,
+          explanation: 'Statements 1 and 2 are correct. Statement 3 is incorrect because the MPC is chaired ex-officio by the RBI Governor, not the Finance Minister.'
+        }
+      ];
+      quizAnswers = {};
+      renderQuizQuestions();
+      showToast('Loaded sample UPSC Prelims questions.');
+    }
+
+    // --- DAILY NEWS RADIO ---
+    function stopSpeech() {
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    }
+
+    function playRadioScript() {
+      if (!('speechSynthesis' in window)) {
+        showToast('Speech synthesis is not supported in this browser.');
+        return;
+      }
+      if (!currentRadioScript) return;
+      stopSpeech();
+      const utter = new SpeechSynthesisUtterance(currentRadioScript);
+      utter.rate = parseFloat(document.getElementById('radioSpeed').value) || 0.95;
+      utter.lang = 'en-IN';
+      utter.onstart = () => { document.getElementById('radioStatusLine').textContent = `Playing at ${utter.rate}x speed...`; };
+      utter.onend = () => { document.getElementById('radioStatusLine').textContent = 'Briefing finished.'; };
+      window.speechSynthesis.speak(utter);
+    }
+
+    function renderRadioOutput(headline, spokenScript, sections, sources = []) {
+      currentRadioScript = spokenScript;
+      document.getElementById('radioPlayerBox').classList.remove('hidden');
+      document.getElementById('radioHeadline').textContent = headline;
+      document.getElementById('radioTranscriptCard').classList.remove('hidden');
+      const srcHtml = sources.length ? `<div class="p-3 rounded-xl bg-indigo-50/60 border border-indigo-100 text-xs text-slate-700"><strong>Live Web Sources: </strong>${sources.map((s) => `<a href="${escapeHtml(s.uri)}" target="_blank" rel="noopener noreferrer" class="text-indigo-700 underline mr-2.5">${escapeHtml(s.title)}</a>`).join('')}</div>` : '';
+      document.getElementById('radioTranscriptBody').innerHTML = srcHtml + (sections || []).map((sec) => `
+        <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+          <div class="text-xs font-bold uppercase text-indigo-700">${escapeHtml(sec.paper)}</div>
+          <div class="font-bold text-slate-900">${escapeHtml(sec.title)}</div>
+          <p class="text-slate-700">${escapeHtml(sec.explanation)}</p>
+          <div class="text-xs text-slate-500 pt-1"><strong>UPSC Linkage:</strong> ${escapeHtml(sec.linkage)}</div>
+        </div>
+      `).join('');
+    }
+
+    async function generateNewsRadio() {
+      const topics = document.getElementById('radioTopicInput').value.trim();
+      const btn = document.getElementById('btnGenRadio');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Preparing...';
+      try {
+        const prompt = `Prepare a UPSC CSE-level Daily Current Affairs Audio Briefing${topics ? ` covering: ${topics}` : ' covering 4 high-yield GS I–IV themes (Polity/Governance, Economy, Environment/IR, Sci-Tech)'}.
+Return ONLY valid JSON:
+{
+  "headline": "Short title for today's briefing",
+  "spokenScript": "Smooth, clear spoken-word radio script (400-600 words, no markdown symbols or URLs) explaining what happened, constitutional/static linkages, concrete examples, and Prelims/Mains takeaways.",
+  "sections": [
+    {"paper": "GS Paper II · Polity", "title": "...", "explanation": "...", "linkage": "Articles / Committees / Precedents"}
+  ]
+}`;
+        const todayDate = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+        const groundedPrompt = `Use Google Search to fetch today's (${todayDate}) major UPSC-relevant news & editorials from The Hindu, The Indian Express, PIB, and PRS India.\n` + prompt;
+        const { text: raw, sources } = await callGemini([{ text: groundedPrompt }], true, true);
+        const parsed = extractJson(raw);
+        renderRadioOutput(parsed.headline, parsed.spokenScript, parsed.sections, sources);
+        showToast('UPSC News Radio briefing ready (live web grounded)!');
+      } catch (e) {
+        showToast(e.message || 'Could not generate radio briefing.');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Generate Briefing';
+      }
+    }
+
+    function loadSampleRadio() {
+      renderRadioOutput(
+        'Sample UPSC Daily News Radio · GS II & GS III',
+        'Good evening, UPSC aspirant. Today we cover two high-yield themes for Prelims and Mains. First, under General Studies Paper 2, cooperative fiscal federalism and the Sixteenth Finance Commission. Under Article 280 of the Constitution, the Finance Commission recommends vertical and horizontal tax devolution. For Mains answers, remember to mention rising cesses and surcharges that shrink the divisible pool, alongside Article 280 grants to local bodies. Second, under General Studies Paper 3, India’s renewable energy grid integration. While solar and wind capacity are expanding rapidly, grid stability requires battery energy storage systems and pumped hydro projects, linking directly to India’s Panchamrit targets.',
+        [
+          {
+            paper: 'GS Paper II · Polity & Governance',
+            title: '16th Finance Commission & Fiscal Federalism',
+            explanation: 'Vertical devolution (41% under 15th FC) balances Centre-State resources, while cesses and surcharges remain outside the divisible pool.',
+            linkage: 'Article 280, Article 270, 2nd ARC & Sarkaria Commission.'
+          },
+          {
+            paper: 'GS Paper III · Economy & Environment',
+            title: 'Renewable Grid Integration & Energy Storage',
+            explanation: 'Scaling solar and wind requires Battery Energy Storage Systems (BESS) and Green Energy Corridors to prevent curtailment.',
+            linkage: 'India Panchamrit 2030 targets (500 GW non-fossil capacity).'
+          }
+        ]
+      );
+      showToast('Sample News Radio loaded. Press Play to listen.');
+    }
+
+    // --- MAINS EVALUATOR ---
+    function renderAttachedPages() {
+      const label = document.getElementById('imageNameLabel');
+      const clearBtn = document.getElementById('btnClearImage');
+      const listEl = document.getElementById('attachedPagesList');
+      if (!attachedImages.length) {
+        label.textContent = 'No pages attached';
+        clearBtn.classList.add('hidden');
+        listEl.classList.add('hidden');
+        listEl.innerHTML = '';
+        return;
+      }
+      label.textContent = `${attachedImages.length} ${attachedImages.length === 1 ? 'page' : 'pages'} attached`;
+      clearBtn.classList.remove('hidden');
+      listEl.classList.remove('hidden');
+      listEl.innerHTML = '';
+      attachedImages.forEach((img, idx) => {
+        const chip = document.createElement('div');
+        chip.className = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-200 text-xs text-indigo-900';
+        chip.innerHTML = `<span class="font-semibold">Page ${idx + 1}:</span> <span class="truncate max-w-[110px]">${escapeHtml(img.name)}</span>`;
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'ml-1 text-indigo-600 hover:text-rose-600 font-bold';
+        rm.textContent = '×';
+        rm.addEventListener('click', () => { attachedImages = attachedImages.filter((x) => x.id !== img.id); renderAttachedPages(); });
+        chip.appendChild(rm);
+        listEl.appendChild(chip);
+      });
+    }
+
+    function renderEvaluationResult(r) {
+      document.getElementById('evalResultCard').classList.remove('hidden');
+      document.getElementById('resPaperTitle').textContent = `${r.paper} · ${r.marks}`;
+      document.getElementById('resScoreBadge').textContent = r.score;
+      const ul = (arr) => `<ul class="list-disc pl-5 space-y-1">${(arr || []).map((x) => `<li>${escapeHtml(x)}</li>`).join('')}</ul>`;
+      document.getElementById('resBody').innerHTML = `
+        <div class="p-3 rounded-xl bg-slate-50 border border-slate-100"><strong>Structure:</strong> ${escapeHtml(r.structureFeedback || '')}</div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="p-3 rounded-xl bg-emerald-50/60 border border-emerald-100"><div class="text-xs font-bold text-emerald-800 uppercase mb-1">Strengths</div>${ul(r.strengths)}</div>
+          <div class="p-3 rounded-xl bg-amber-50/70 border border-amber-100"><div class="text-xs font-bold text-amber-800 uppercase mb-1">Gaps</div>${ul(r.gaps)}</div>
+        </div>
+        <div class="p-3 rounded-xl bg-indigo-50/60 border border-indigo-100"><div class="text-xs font-bold text-indigo-900 uppercase mb-1">Topper Value Additions</div>${ul(r.valueAdditions)}</div>
+        <div class="p-3 rounded-xl bg-slate-50 border border-slate-100"><strong>Model Intro &amp; Way Forward:</strong> ${escapeHtml(r.modelFramework || '')}</div>
+        ${(r.sources && r.sources.length) ? `<div class="p-3 rounded-xl bg-indigo-50/50 border border-indigo-100 text-xs"><strong>Verified Web Sources: </strong>${r.sources.map((s) => `<a href="${escapeHtml(s.uri)}" target="_blank" rel="noopener noreferrer" class="text-indigo-700 underline mr-2.5">${escapeHtml(s.title)}</a>`).join('')}</div>` : ''}
+      `;
+    }
+
+    async function handleEvaluate() {
+      const paper = document.getElementById('evalPaper').value;
+      const marks = document.getElementById('evalMarks').value;
+      const question = document.getElementById('evalQuestion').value.trim();
+      const answer = document.getElementById('evalAnswer').value.trim();
+      if (!question) { showToast('Enter the Mains question first.'); return; }
+      if (!answer && !attachedImages.length) { showToast('Type your answer or attach pages.'); return; }
+
+      const btn = document.getElementById('btnEvaluate');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Evaluating...';
+      try {
+        const prompt = `You are a strict UPSC CSE Mains examiner calibrated on AIR 1–10 topper scripts (25-30 word intro, 3-4 sub-headed body dimensions, diagrams/tables, GS I-IV Articles/Committees/Data/Thinkers, forward-looking conclusion).
+Evaluate for ${paper} (${marks}).
+Question: ${question}
+${answer ? `Answer:\n${answer}` : `Answer is in the attached ${attachedImages.length} handwritten page(s) in order.`}
+Return ONLY valid JSON: {"score":"e.g. 6.0 / 10","structureFeedback":"...","strengths":["..."],"gaps":["..."],"valueAdditions":["..."],"modelFramework":"..."}`;
+        const parts = [{ text: prompt }];
+        attachedImages.forEach((img, i) => {
+          parts.push({ text: `[Answer Page ${i + 1}]` });
+          parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
+        });
+        parts[0].text = 'Use Google Search to verify latest Supreme Court judgments, committee recommendations, government schemes, PIB data, and UPSC topper answer benchmarks relevant to this question.\n' + parts[0].text;
+        const { text: raw, sources } = await callGemini(parts, true, true);
+        renderEvaluationResult({ paper, marks, sources, ...extractJson(raw) });
+        showToast('Evaluation complete (web-grounded)!');
+      } catch (e) {
+        showToast(e.message || 'Evaluation failed.');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Evaluate Answer';
+      }
+    }
+
+    function runSampleEvaluation() {
+      renderEvaluationResult({
+        paper: 'GS Paper II', marks: '10 marks (150 words)', score: '6.0 / 10 (Sample)',
+        structureFeedback: 'Strong Article 280 opening. Split the body into horizontal criteria and local body grants, and add a 1-box diagram of devolution flows.',
+        strengths: ['Accurate Article 280 and 41% 15th FC devolution citation.'],
+        gaps: ['Missed 16th FC terms of reference and horizontal equity weights.'],
+        valueAdditions: ['Cite 2nd ARC & Sarkaria Commission on fiscal balance.'],
+        modelFramework: 'Intro: Article 280 makes the Finance Commission the constitutional anchor of fiscal federalism. Way Forward: Capping non-shareable cesses strengthens state fiscal space.'
+      });
+    }
+
+    // Event bindings
+    document.querySelectorAll('.tab-btn').forEach((b) => b.addEventListener('click', () => switchTab(b.getAttribute('data-tab'))));
+    document.getElementById('datePicker').addEventListener('change', (e) => { if (e.target.value) { state.selectedDate = e.target.value; renderChecklistAll(); } });
+    document.getElementById('btnPrevDay').addEventListener('click', () => { state.selectedDate = shiftDate(state.selectedDate, -1); renderChecklistAll(); });
+    document.getElementById('btnNextDay').addEventListener('click', () => { state.selectedDate = shiftDate(state.selectedDate, 1); renderChecklistAll(); });
+    document.getElementById('btnToday').addEventListener('click', () => { state.selectedDate = TODAY_STR; renderChecklistAll(); });
+    document.getElementById('btnMarkAll').addEventListener('click', () => { const r = getDayRecord(state.selectedDate); SESSIONS.forEach((s) => r.completed[s.id] = true); saveRecords(); renderChecklistAll(); });
+    document.getElementById('btnClearDay').addEventListener('click', () => { getDayRecord(state.selectedDate).completed = {}; saveRecords(); renderChecklistAll(); });
+    document.getElementById('dailyNotes').addEventListener('input', (e) => { getDayRecord(state.selectedDate).notes = e.target.value; saveRecords(); });
+
+    document.getElementById('btnExportJson').addEventListener('click', () => {
+      const b = new Blob([JSON.stringify(state.records, null, 2)], { type: 'application/json' });
+      const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = `upsc_records_${TODAY_STR}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(u);
+    });
+    document.getElementById('btnExportCsv').addEventListener('click', () => {
+      const rows = ['Date,Sessions,Hours,Completion %'];
+      Object.keys(state.records).sort().forEach((d) => { const st = calcDayStats(state.records[d]); rows.push(`${d},${st.count}/7,${st.hrs},${st.pct}%`); });
+      const b = new Blob([rows.join('\n')], { type: 'text/csv' });
+      const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = `upsc_records_${TODAY_STR}.csv`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(u);
+    });
+
+    document.getElementById('btnGenQuiz20').addEventListener('click', generatePrelims20);
+    document.getElementById('btnSampleQuiz').addEventListener('click', loadSampleQuiz);
+    document.getElementById('btnGenRadio').addEventListener('click', generateNewsRadio);
+    document.getElementById('btnSampleRadio').addEventListener('click', loadSampleRadio);
+    document.getElementById('btnRadioPlay').addEventListener('click', playRadioScript);
+    document.getElementById('btnRadioPause').addEventListener('click', () => { if ('speechSynthesis' in window) window.speechSynthesis.pause(); });
+    document.getElementById('btnRadioStop').addEventListener('click', stopSpeech);
+
+    document.getElementById('evalImageInput').addEventListener('change', (e) => {
+      Array.from(e.target.files || []).forEach((file) => {
+        const rd = new FileReader();
+        rd.onload = () => {
+          const r = String(rd.result);
+          attachedImages.push({ id: `${Date.now()}_${Math.random()}`, mimeType: file.type || 'image/jpeg', base64: r.slice(r.indexOf(',') + 1), name: file.name });
+          renderAttachedPages();
+        };
+        rd.readAsDataURL(file);
+      });
+      e.target.value = '';
+    });
+    document.getElementById('btnClearImage').addEventListener('click', () => { attachedImages = []; renderAttachedPages(); });
+    document.getElementById('btnEvaluate').addEventListener('click', handleEvaluate);
+    document.getElementById('btnDemoEval').addEventListener('click', runSampleEvaluation);
+
+    document.getElementById('btnOpenSettings').addEventListener('click', () => { document.getElementById('apiKeyInput').value = apiKey; document.getElementById('settingsModal').classList.remove('hidden'); });
+    document.getElementById('btnCloseSettings').addEventListener('click', () => document.getElementById('settingsModal').classList.add('hidden'));
+    document.getElementById('btnSaveKey').addEventListener('click', () => {
+      apiKey = document.getElementById('apiKeyInput').value.trim();
+      try { localStorage.setItem(KEY_STORAGE, apiKey); } catch (e) {}
+      updateApiBadge();
+      document.getElementById('settingsModal').classList.add('hidden');
+      showToast('Gemini API key saved.');
+    });
+    document.getElementById('btnRemoveKey').addEventListener('click', () => {
+      apiKey = ''; document.getElementById('apiKeyInput').value = '';
+      try { localStorage.removeItem(KEY_STORAGE); } catch (e) {}
+      updateApiBadge();
+      document.getElementById('settingsModal').classList.add('hidden');
+    });
+
+    loadAll();
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>
