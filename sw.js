@@ -1,4 +1,4 @@
-const CACHE_NAME = 'upsc-lbsnaa-v12';
+const CACHE_NAME = 'upsc-lbsnaa-v14';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -16,6 +16,19 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  if (event.request.url.includes('generativelanguage.googleapis.com')) return;
-  event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
+  if (event.request.url.includes('generativelanguage.googleapis.com') || event.request.url.includes('rss2json') || event.request.url.includes('allorigins')) {
+    return;
+  }
+  // Network-first so updates from GitHub Pages appear immediately, with offline cache fallback
+  event.respondWith(
+    fetch(event.request)
+      .then((res) => {
+        if (res && res.status === 200 && event.request.method === 'GET') {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        }
+        return res;
+      })
+      .catch(() => caches.match(event.request))
+  );
 });

@@ -185,12 +185,15 @@
 
         <div class="flex flex-col sm:flex-row gap-2">
           <input id="radioTopicInput" type="text" placeholder="Enter today's news topics or leave blank for a full UPSC daily briefing..." class="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-          <div class="flex gap-2">
+          <div class="flex flex-wrap gap-2">
             <button id="btnGenRadio" type="button" class="px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700">
               Generate Briefing
             </button>
             <button id="btnSampleRadio" type="button" class="px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200">
               Sample Radio
+            </button>
+            <button id="btnDownloadRadioTop" type="button" class="px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700">
+              Download Offline
             </button>
           </div>
         </div>
@@ -578,7 +581,14 @@
       throw new Error(lastErr);
     }
 
-    async function fetchLastTwoDaysRssNews() {
+    function getLastOneMonth() {
+      const now = new Date();
+      const ago = new Date(now.getTime() - 30 * 86400000);
+      const fmt = (d) => d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+      return { todayStr: fmt(now), agoStr: fmt(ago), rangeLabel: `${fmt(ago)} – ${fmt(now)}` };
+    }
+
+    async function fetchLastTwoDaysRssNews(daysWindow = 2) {
       const feeds = [
         { name: 'PIB (Govt of India)', url: 'https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3' },
         { name: 'PRS India (Parliament & Bills)', url: 'https://prsindia.org/rss.xml' },
@@ -589,7 +599,7 @@
         { name: 'Indian Express (Explained)', url: 'https://indianexpress.com/section/explained/feed/' },
         { name: 'Indian Express (India)', url: 'https://indianexpress.com/section/india/feed/' }
       ];
-      const cutoff = Date.now() - 2 * 86400000;
+      const cutoff = Date.now() - daysWindow * 86400000;
       const recentItems = [];
       const fallbackItems = [];
       const sources = [];
@@ -636,7 +646,7 @@
 
       recentItems.sort((a, b) => b.ts - a.ts);
       fallbackItems.sort((a, b) => b.ts - a.ts);
-      const top = (recentItems.length >= 2 ? recentItems : recentItems.concat(fallbackItems)).slice(0, 12);
+      const top = (recentItems.length >= 5 ? recentItems : recentItems.concat(fallbackItems)).slice(0, 20);
       top.forEach((x) => sources.push({ title: `${x.source} (${x.date})`, uri: x.link }));
       const articlesText = top.map((x, i) => `${i + 1}. [${x.date}] (${x.source}) ${x.title} — ${x.desc}`).join('\n');
       return { articlesText, sources, rawItems: top };
@@ -722,10 +732,10 @@
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> Generating...';
       try {
-        const { todayStr, yesterdayStr, rangeLabel } = getLastTwoDays();
-        const { articlesText, sources } = await fetchLastTwoDaysRssNews();
-        const newsBlock = articlesText ? `\n\nLIVE LAST-2-DAYS NEWS FEED (${rangeLabel}):\n${articlesText}` : '';
-        const prompt = `Generate a 20-question UPSC CSE Prelims GS Paper I mock set${theme ? ` focused on "${theme}"` : ''} blending the live last-2-days current affairs below (${yesterdayStr} to ${todayStr}) with static UPSC PYQ-style questions (multi-statement, Statement-I/II, "how many pairs" elimination).${newsBlock}
+        const { todayStr, agoStr, rangeLabel } = getLastOneMonth();
+        const { articlesText, sources } = await fetchLastTwoDaysRssNews(30);
+        const newsBlock = articlesText ? `\n\nLIVE LAST-30-DAYS NEWS FEED (${rangeLabel}):\n${articlesText}` : '';
+        const prompt = `Generate a 20-question UPSC CSE Prelims GS Paper I mock set${theme ? ` focused on "${theme}"` : ''} blending current affairs from NOT MORE THAN 1 MONTH (${agoStr} to ${todayStr} ONLY — DO NOT include news older than 1 month) with static UPSC PYQ-style questions (multi-statement, Statement-I/II, "how many pairs" elimination).${newsBlock}
 For each question, include a "date" field showing the exact news date (${todayStr} or ${yesterdayStr}) for current affairs items, or "Static / PYQ" for static items.
 Return ONLY valid JSON array of 20 objects:
 [{"date":"${todayStr}","tag":"Polity / Current Affairs","q":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answerIndex":0,"explanation":"..."}]`;
@@ -936,8 +946,10 @@ Return ONLY valid JSON array of 20 objects:
 
     function renderRadioOutput(headline, spokenScript, sections, sources = [], dateBanner = '') {
       currentRadioScript = spokenScript;
+      const wc = spokenScript ? spokenScript.trim().split(/\s+/).length : 0;
+      const estMin = Math.max(1, Math.round(wc / 135));
       document.getElementById('radioPlayerBox').classList.remove('hidden');
-      document.getElementById('radioDateBadge').textContent = dateBanner ? `On Air · ${dateBanner}` : 'On Air · UPSC Audio Briefing';
+      document.getElementById('radioDateBadge').textContent = dateBanner ? `On Air · ${dateBanner} · ~${estMin} min (${wc} words)` : `On Air · ~${estMin} min (${wc} words)`;
       document.getElementById('radioHeadline').textContent = headline;
       document.getElementById('radioTranscriptCard').classList.remove('hidden');
       const dateHtml = dateBanner ? `<div class="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs font-semibold text-amber-900">Briefing Date: ${escapeHtml(dateBanner)}</div>` : '';
@@ -965,14 +977,17 @@ Return ONLY valid JSON array of 20 objects:
         const todayKey = new Date().toISOString().slice(0, 10);
         const { articlesText, sources, rawItems } = await fetchLastTwoDaysRssNews();
         const newsBlock = articlesText ? `\n\nLIVE LAST-2-DAYS NEWS FROM GOVT & NEWSPAPER FEEDS (${rangeLabel}):\n${articlesText}` : '';
-        const prompt = `Prepare a UPSC CSE-level Daily Current Affairs Audio Briefing${topics ? ` focusing on: ${topics}` : ' covering 4 high-yield GS I–IV updates'} strictly from the last 2 days (${yesterdayStr} and ${todayStr}).${newsBlock}
-IMPORTANT FOR AUDIO: Start the spokenScript by clearly saying the date ("Here is your UPSC Daily News Radio for ${todayStr}, covering updates from ${yesterdayStr} and ${todayStr}"), and before each news story explicitly speak the article's date.
+        const prompt = `Prepare a comprehensive, minimum 15-minute UPSC CSE-level Daily Current Affairs Audio Briefing${topics ? ` focusing on: ${topics}` : ' covering 5 to 10 high-importance GS I–IV articles ranked by UPSC exam relevance'} strictly from the last 2 days (${yesterdayStr} and ${todayStr}).${newsBlock}
+IMPORTANT FOR AUDIO & DEPTH:
+1. Select 5 to 10 high-importance articles (never fewer than 5 when available) across Polity, Economy, IR, Environment, Sci-Tech, and Governance.
+2. Start the spokenScript by clearly saying the date ("Today is ${todayStr}. Here is your UPSC Daily News Radio covering updates from ${yesterdayStr} and ${todayStr}"), and before each article explicitly speak its date.
+3. Make the spokenScript thorough and unhurried (~2,000 to 2,400 words so it plays for at least 15 minutes at 0.95x pace), covering for every article: what happened, why it matters for UPSC, constitutional Articles/Acts/Committees, concrete Mains examples, and Prelims/Mains takeaways—with no markdown symbols or raw URLs.
 Return ONLY valid JSON:
 {
   "headline": "UPSC Daily News Radio",
-  "spokenScript": "Smooth, clear spoken-word radio script (450-650 words, no markdown symbols or URLs) starting with the exact date (${todayStr}), speaking each item's date aloud, and explaining what happened, constitutional/static linkages, concrete examples, and Prelims/Mains takeaways.",
+  "spokenScript": "Full 2,000-2,400 word spoken-word radio script (minimum 15 minutes at 0.95x pace) covering 5 to 10 high-importance articles with dates spoken aloud.",
   "sections": [
-    {"date": "${todayStr}", "paper": "GS Paper II · Polity", "title": "...", "explanation": "...", "linkage": "Articles / Committees / Precedents"}
+    {"date": "${todayStr}", "paper": "GS Paper II · Polity", "title": "...", "explanation": "Detailed UPSC-level analysis with examples", "linkage": "Articles / Committees / Precedents"}
   ]
 }`;
         let parsed = null;
@@ -986,7 +1001,7 @@ Return ONLY valid JSON:
         }
         if (!parsed) {
           if (rawItems && rawItems.length > 0) {
-            const topItems = rawItems.slice(0, 6);
+            const topItems = rawItems.slice(0, 10);
             const spokenParts = topItems.map((it, idx) => `Update ${idx + 1}, dated ${it.date}, from ${it.source}. ${it.title}. ${it.desc}`);
             parsed = {
               headline: `UPSC Live Feed Radio · ${todayStr}`,
@@ -1166,9 +1181,9 @@ Return ONLY valid JSON: {"score":"e.g. 6.0 / 10","structureFeedback":"...","stre
     document.getElementById('btnRadioPlay').addEventListener('click', playRadioScript);
     document.getElementById('btnRadioPause').addEventListener('click', pauseRadioScript);
     document.getElementById('btnRadioStop').addEventListener('click', stopSpeech);
-    document.getElementById('btnDownloadRadio').addEventListener('click', () => {
+    function downloadCurrentRadio() {
       if (!currentRadioScript) {
-        showToast('Generate or load a briefing first.');
+        showToast('Generate or tap Sample Radio first.');
         return;
       }
       const dateText = document.getElementById('radioDateBadge').textContent || TODAY_STR;
@@ -1183,8 +1198,10 @@ Return ONLY valid JSON: {"score":"e.g. 6.0 / 10","structureFeedback":"...","stre
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      showToast('Briefing downloaded for offline reading/listening.');
-    });
+      showToast('Briefing downloaded for offline use.');
+    }
+    document.getElementById('btnDownloadRadio').addEventListener('click', downloadCurrentRadio);
+    document.getElementById('btnDownloadRadioTop').addEventListener('click', downloadCurrentRadio);
 
     document.getElementById('evalImageInput').addEventListener('change', (e) => {
       Array.from(e.target.files || []).forEach((file) => {
