@@ -194,11 +194,17 @@
           </div>
         </div>
 
+        <!-- Saved Radio Dates Archive -->
+        <div id="radioArchiveRow" class="hidden flex flex-wrap items-center gap-2 text-xs">
+          <span class="font-semibold text-slate-600">Saved Briefings:</span>
+          <select id="radioDateSelect" class="px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 font-semibold text-slate-800"></select>
+        </div>
+
         <!-- Audio Player Controls -->
         <div id="radioPlayerBox" class="hidden p-4 rounded-xl bg-indigo-950 text-white space-y-3">
-          <div class="flex items-center justify-between">
+          <div class="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <div class="text-[11px] uppercase tracking-wider text-amber-300 font-bold">On Air · UPSC Audio Briefing</div>
+              <div id="radioDateBadge" class="text-[11px] uppercase tracking-wider text-amber-300 font-bold">On Air · UPSC Audio Briefing</div>
               <div id="radioHeadline" class="text-sm font-semibold mt-0.5">Ready to play</div>
             </div>
             <div class="flex items-center gap-2">
@@ -326,7 +332,10 @@
     let activeQuiz = [];
     let quizAnswers = {};
     let hoursChartInstance = null;
+    const RADIO_ARCHIVE_KEY = 'upsc_radio_archive_v1';
     let currentRadioScript = '';
+    let radioArchive = {};
+    let radioAutoAttempted = false;
 
     function escapeHtml(str) {
       return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -353,8 +362,16 @@
         state.records[TODAY_STR] = { completed: { '2': true, '3': true }, notes: '' };
         saveRecords();
       }
+      try {
+        const rawRadio = localStorage.getItem(RADIO_ARCHIVE_KEY);
+        if (rawRadio) {
+          const parsedRadio = JSON.parse(rawRadio);
+          if (parsedRadio && typeof parsedRadio === 'object') radioArchive = parsedRadio;
+        }
+      } catch (e) {}
       updateApiBadge();
       renderChecklistAll();
+      renderRadioArchiveSelect();
     }
 
     function saveRecords() {
@@ -382,6 +399,7 @@
         document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== name);
       });
       if (name === 'checklist') renderHoursChart();
+      if (name === 'radio') ensureRadioLoaded();
     }
 
     // --- CHECKLIST ---
@@ -546,6 +564,46 @@
       throw new Error(lastErr);
     }
 
+    async function fetchLastTwoDaysRssNews() {
+      const feeds = [
+        { name: 'PIB (Govt of India)', url: 'https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3' },
+        { name: 'PRS India (Parliament & Bills)', url: 'https://prsindia.org/rss.xml' },
+        { name: 'AIR News (All India Radio)', url: 'https://newsonair.gov.in/Nsd_RssFeed.aspx?cat=National' },
+        { name: 'RBI (Reserve Bank of India)', url: 'https://www.rbi.org.in/pressreleases_rss.xml' },
+        { name: 'The Hindu (National)', url: 'https://www.thehindu.com/news/national/feeder/default.rss' },
+        { name: 'The Hindu (Editorial)', url: 'https://www.thehindu.com/opinion/editorial/feeder/default.rss' },
+        { name: 'Indian Express (Explained)', url: 'https://indianexpress.com/section/explained/feed/' },
+        { name: 'Indian Express (India)', url: 'https://indianexpress.com/section/india/feed/' }
+      ];
+      const cutoff = Date.now() - 2 * 86400000;
+      const items = [];
+      const sources = [];
+      const seenLinks = new Set();
+
+      await Promise.all(feeds.map(async (f) => {
+        try {
+          const res = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(f.url)}`);
+          if (!res.ok) return;
+          const data = await res.json();
+          (data.items || []).forEach((it) => {
+            const ts = Date.parse(it.pubDate || '');
+            if (!isNaN(ts) && ts >= cutoff && !seenLinks.has(it.link)) {
+              seenLinks.add(it.link);
+              const cleanDesc = String(it.description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 260);
+              const dateLabel = new Date(ts).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+              items.push({ source: f.name, date: dateLabel, title: it.title, desc: cleanDesc, link: it.link, ts });
+            }
+          });
+        } catch (e) {}
+      }));
+
+      items.sort((a, b) => b.ts - a.ts);
+      const top = items.slice(0, 12);
+      top.forEach((x) => sources.push({ title: `${x.source} (${x.date})`, uri: x.link }));
+      const articlesText = top.map((x, i) => `${i + 1}. [${x.date}] (${x.source}) ${x.title} — ${x.desc}`).join('\n');
+      return { articlesText, sources };
+    }
+
     function getLastTwoDays() {
       const now = new Date();
       const yest = new Date(now.getTime() - 86400000);
@@ -627,12 +685,13 @@
       btn.innerHTML = '<span class="spinner"></span> Generating...';
       try {
         const { todayStr, yesterdayStr, rangeLabel } = getLastTwoDays();
-        const prompt = `Use Google Search to fetch ONLY current affairs from the LAST 2 DAYS (${yesterdayStr} and ${todayStr}) from The Hindu, The Indian Express, PIB, and PRS India. DO NOT include older news from earlier weeks or months.
-Generate a 20-question UPSC CSE Prelims GS Paper I mock set${theme ? ` focused on "${theme}"` : ''} blending those last-2-days current affairs with static UPSC PYQ-style questions (multi-statement, Statement-I/II, "how many pairs" elimination).
+        const { articlesText, sources } = await fetchLastTwoDaysRssNews();
+        const newsBlock = articlesText ? `\n\nLIVE LAST-2-DAYS NEWS FEED (${rangeLabel}):\n${articlesText}` : '';
+        const prompt = `Generate a 20-question UPSC CSE Prelims GS Paper I mock set${theme ? ` focused on "${theme}"` : ''} blending the live last-2-days current affairs below (${yesterdayStr} to ${todayStr}) with static UPSC PYQ-style questions (multi-statement, Statement-I/II, "how many pairs" elimination).${newsBlock}
 For each question, include a "date" field showing the exact news date (${todayStr} or ${yesterdayStr}) for current affairs items, or "Static / PYQ" for static items.
 Return ONLY valid JSON array of 20 objects:
 [{"date":"${todayStr}","tag":"Polity / Current Affairs","q":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answerIndex":0,"explanation":"..."}]`;
-        const { text: raw, sources } = await callGemini([{ text: prompt }], true, true);
+        const { text: raw } = await callGemini([{ text: prompt }], true, false);
         activeQuiz = extractJson(raw);
         quizAnswers = {};
         renderQuizQuestions(sources, rangeLabel);
@@ -692,12 +751,44 @@ Return ONLY valid JSON array of 20 objects:
       window.speechSynthesis.speak(utter);
     }
 
+    function saveRadioArchive() {
+      try { localStorage.setItem(RADIO_ARCHIVE_KEY, JSON.stringify(radioArchive)); } catch (e) {}
+    }
+
+    function renderRadioArchiveSelect(selectedKey = '') {
+      const keys = Object.keys(radioArchive).sort((a, b) => b.localeCompare(a));
+      const row = document.getElementById('radioArchiveRow');
+      const sel = document.getElementById('radioDateSelect');
+      if (!keys.length) {
+        row.classList.add('hidden');
+        return;
+      }
+      row.classList.remove('hidden');
+      sel.innerHTML = keys.map((k) => `<option value="${k}">${escapeHtml(radioArchive[k].displayDate || k)}</option>`).join('');
+      const target = selectedKey && radioArchive[selectedKey] ? selectedKey : keys[0];
+      sel.value = target;
+      const item = radioArchive[target];
+      if (item) {
+        renderRadioOutput(item.headline, item.spokenScript, item.sections, item.sources || [], item.displayDate || target);
+      }
+    }
+
+    function ensureRadioLoaded() {
+      const todayKey = new Date().toISOString().slice(0, 10);
+      renderRadioArchiveSelect();
+      if (!radioArchive[todayKey] && apiKey.trim() && !radioAutoAttempted) {
+        radioAutoAttempted = true;
+        generateNewsRadio(true);
+      }
+    }
+
     function renderRadioOutput(headline, spokenScript, sections, sources = [], dateBanner = '') {
       currentRadioScript = spokenScript;
       document.getElementById('radioPlayerBox').classList.remove('hidden');
-      document.getElementById('radioHeadline').textContent = dateBanner ? `${headline} (${dateBanner})` : headline;
+      document.getElementById('radioDateBadge').textContent = dateBanner ? `On Air · ${dateBanner}` : 'On Air · UPSC Audio Briefing';
+      document.getElementById('radioHeadline').textContent = headline;
       document.getElementById('radioTranscriptCard').classList.remove('hidden');
-      const dateHtml = dateBanner ? `<div class="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs font-semibold text-amber-900">Briefing Dates Covered: ${escapeHtml(dateBanner)} (Last 2 Days Only)</div>` : '';
+      const dateHtml = dateBanner ? `<div class="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs font-semibold text-amber-900">Briefing Date: ${escapeHtml(dateBanner)}</div>` : '';
       const srcHtml = sources.length ? `<div class="p-3 rounded-xl bg-indigo-50/60 border border-indigo-100 text-xs text-slate-700"><strong>Live Web Sources: </strong>${sources.map((s) => `<a href="${escapeHtml(s.uri)}" target="_blank" rel="noopener noreferrer" class="text-indigo-700 underline mr-2.5">${escapeHtml(s.title)}</a>`).join('')}</div>` : '';
       document.getElementById('radioTranscriptBody').innerHTML = dateHtml + srcHtml + (sections || []).map((sec) => `
         <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
@@ -712,30 +803,41 @@ Return ONLY valid JSON array of 20 objects:
       `).join('');
     }
 
-    async function generateNewsRadio() {
+    async function generateNewsRadio(isAuto = false) {
       const topics = document.getElementById('radioTopicInput').value.trim();
       const btn = document.getElementById('btnGenRadio');
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> Preparing...';
       try {
         const { todayStr, yesterdayStr, rangeLabel } = getLastTwoDays();
-        const prompt = `Use Google Search to fetch ONLY news and editorials published in the LAST 2 DAYS (${yesterdayStr} and ${todayStr}) from The Hindu, The Indian Express, PIB, and PRS India. STRICTLY DO NOT include any older news from earlier days or months.
-Prepare a UPSC CSE-level Daily Current Affairs Audio Briefing${topics ? ` covering: ${topics}` : ' covering 4 high-yield GS I–IV updates from these last 2 days'}.
-Mention the exact date (${todayStr} or ${yesterdayStr}) inside the spoken script and in every section's "date" field.
+        const todayKey = new Date().toISOString().slice(0, 10);
+        const { articlesText, sources } = await fetchLastTwoDaysRssNews();
+        const newsBlock = articlesText ? `\n\nLIVE LAST-2-DAYS NEWS FROM THE HINDU & INDIAN EXPRESS (${rangeLabel}):\n${articlesText}` : '';
+        const prompt = `Prepare a UPSC CSE-level Daily Current Affairs Audio Briefing${topics ? ` focusing on: ${topics}` : ' covering 4 high-yield GS I–IV updates'} strictly from the last 2 days (${yesterdayStr} and ${todayStr}).${newsBlock}
+IMPORTANT FOR AUDIO: Start the spokenScript by clearly saying the date ("Here is your UPSC Daily News Radio for ${todayStr}, covering updates from ${yesterdayStr} and ${todayStr}"), and before each news story explicitly speak the article's date.
 Return ONLY valid JSON:
 {
   "headline": "UPSC Daily News Radio",
-  "spokenScript": "Smooth, clear spoken-word radio script (450-650 words, no markdown symbols or URLs) stating the dates (${yesterdayStr} and ${todayStr}), explaining what happened, constitutional/static linkages, concrete examples, and Prelims/Mains takeaways.",
+  "spokenScript": "Smooth, clear spoken-word radio script (450-650 words, no markdown symbols or URLs) starting with the exact date (${todayStr}), speaking each item's date aloud, and explaining what happened, constitutional/static linkages, concrete examples, and Prelims/Mains takeaways.",
   "sections": [
     {"date": "${todayStr}", "paper": "GS Paper II · Polity", "title": "...", "explanation": "...", "linkage": "Articles / Committees / Precedents"}
   ]
 }`;
-        const { text: raw, sources } = await callGemini([{ text: prompt }], true, true);
+        const { text: raw } = await callGemini([{ text: prompt }], true, false);
         const parsed = extractJson(raw);
-        renderRadioOutput(parsed.headline, parsed.spokenScript, parsed.sections, sources, rangeLabel);
-        showToast(`UPSC News Radio ready (${rangeLabel})!`);
+        radioArchive[todayKey] = {
+          dateKey: todayKey,
+          displayDate: `${todayStr} (${rangeLabel})`,
+          headline: parsed.headline,
+          spokenScript: parsed.spokenScript,
+          sections: parsed.sections,
+          sources
+        };
+        saveRadioArchive();
+        renderRadioArchiveSelect(todayKey);
+        if (!isAuto) showToast(`UPSC News Radio saved for ${todayStr}!`);
       } catch (e) {
-        showToast(e.message || 'Could not generate radio briefing.');
+        if (!isAuto) showToast(e.message || 'Could not generate radio briefing.');
       } finally {
         btn.disabled = false;
         btn.textContent = 'Generate Briefing';
@@ -833,8 +935,7 @@ Return ONLY valid JSON: {"score":"e.g. 6.0 / 10","structureFeedback":"...","stre
           parts.push({ text: `[Answer Page ${i + 1}]` });
           parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
         });
-        parts[0].text = 'Use Google Search to verify latest Supreme Court judgments, committee recommendations, government schemes, PIB data, and UPSC topper answer benchmarks relevant to this question.\n' + parts[0].text;
-        const { text: raw, sources } = await callGemini(parts, true, true);
+        const { text: raw, sources } = await callGemini(parts, true, false);
         renderEvaluationResult({ paper, marks, sources, ...extractJson(raw) });
         showToast('Evaluation complete (web-grounded)!');
       } catch (e) {
@@ -879,7 +980,10 @@ Return ONLY valid JSON: {"score":"e.g. 6.0 / 10","structureFeedback":"...","stre
 
     document.getElementById('btnGenQuiz20').addEventListener('click', generatePrelims20);
     document.getElementById('btnSampleQuiz').addEventListener('click', loadSampleQuiz);
-    document.getElementById('btnGenRadio').addEventListener('click', generateNewsRadio);
+    document.getElementById('btnGenRadio').addEventListener('click', () => generateNewsRadio(false));
+    document.getElementById('radioDateSelect').addEventListener('change', (e) => {
+      renderRadioArchiveSelect(e.target.value);
+    });
     document.getElementById('btnSampleRadio').addEventListener('click', loadSampleRadio);
     document.getElementById('btnRadioPlay').addEventListener('click', playRadioScript);
     document.getElementById('btnRadioPause').addEventListener('click', () => { if ('speechSynthesis' in window) window.speechSynthesis.pause(); });
