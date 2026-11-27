@@ -233,8 +233,13 @@
               </button>
             </div>
           </div>
-          <div id="radioStatusLine" class="text-xs text-indigo-200 pt-1">Press Play for background audio at 0.95x pace.</div>
-          <audio id="radioAudioPlayer" class="w-full h-9 rounded-lg mt-1" controls></audio>
+          <div id="radioStatusLine" class="text-xs text-indigo-200 pt-1">Press Play to listen at 0.95x pace.</div>
+          <div id="deviceVoiceProgressWrap" class="hidden space-y-1 pt-1">
+            <div class="w-full h-2 bg-white/15 rounded-full overflow-hidden">
+              <div id="deviceVoiceProgressBar" class="h-full bg-amber-400 rounded-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+          </div>
+          <audio id="radioAudioPlayer" class="hidden w-full h-9 rounded-lg mt-1" controls></audio>
         </div>
       </div>
 
@@ -878,6 +883,8 @@ Return ONLY valid JSON array of 20 objects:
         audio.pause();
         audio.currentTime = 0;
       }
+      const dvBar = document.getElementById('deviceVoiceProgressBar');
+      if (dvBar) dvBar.style.width = '0%';
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
       if ('mediaSession' in navigator) {
         try { navigator.mediaSession.playbackState = 'none'; } catch (e) {}
@@ -916,7 +923,13 @@ Return ONLY valid JSON array of 20 objects:
       utter.onend = () => { if (radioIsPlaying) { radioQueueIdx += 1; speakNextChunk(); } };
       utter.onerror = () => { if (radioIsPlaying) { radioQueueIdx += 1; speakNextChunk(); } };
       const rateLabel = (parseFloat(document.getElementById('radioSpeed').value) || 0.95).toFixed(2);
-      document.getElementById('radioStatusLine').textContent = `Playing part ${radioQueueIdx + 1}/${radioQueue.length} at ${rateLabel}x...`;
+      document.getElementById('radioStatusLine').textContent = `Device voice: part ${radioQueueIdx + 1}/${radioQueue.length} at ${rateLabel}x`;
+      const dvWrap = document.getElementById('deviceVoiceProgressWrap');
+      const dvBar = document.getElementById('deviceVoiceProgressBar');
+      if (dvWrap && dvBar) {
+        dvWrap.classList.remove('hidden');
+        dvBar.style.width = `${Math.round(((radioQueueIdx + 1) / Math.max(radioQueue.length, 1)) * 100)}%`;
+      }
       window.speechSynthesis.speak(utter);
     }
 
@@ -1013,6 +1026,7 @@ Return ONLY valid JSON array of 20 objects:
           audio.loop = false;
           audio.src = url;
           audio.playbackRate = rate;
+          document.getElementById('deviceVoiceProgressWrap')?.classList.add('hidden');
           audio.classList.remove('hidden');
           registerMediaSession();
           radioIsPlaying = true;
@@ -1022,9 +1036,10 @@ Return ONLY valid JSON array of 20 objects:
         } catch (e) {
           audio.pause();
           audio.loop = false;
+          audio.classList.add('hidden');
           audio.removeAttribute('src');
           audio.load();
-          showToast(`TTS audio unavailable (${e.message || 'quota'}) — using device voice.`);
+          showToast(`TTS audio unavailable (${e.message || 'quota'}) — using synced device voice.`);
         }
       }
 
