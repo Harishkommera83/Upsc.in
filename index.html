@@ -353,7 +353,8 @@
   <div id="toast" class="fixed bottom-4 right-4 z-50 hidden bg-slate-900 text-white text-xs font-medium px-4 py-2.5 rounded-xl shadow-lg"></div>
 
   <script>
-    const TODAY_STR = '2026-11-26';
+    const _now = new Date();
+    const TODAY_STR = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
     const STORAGE_KEY = 'upsc_daily_study_records_v1';
     const KEY_STORAGE = 'upsc_agent_gemini_key_v1';
     const GEMINI_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-4-hydrogen'];
@@ -406,8 +407,8 @@
           if (parsed && typeof parsed === 'object') state.records = parsed;
         }
       } catch (e) {}
-      if (!state.records[TODAY_STR]) {
-        state.records[TODAY_STR] = { completed: { '2': true, '3': true }, notes: '' };
+      if (Object.keys(state.records).length === 0) {
+        state.records['2026-11-26'] = { completed: { '2': true, '3': true }, notes: '' };
         saveRecords();
       }
       try {
@@ -917,74 +918,57 @@ Return ONLY valid JSON array of 20 objects:
       window.speechSynthesis.speak(utter);
     }
 
-    let ttsChunks = [];
-    let ttsChunkIdx = 0;
-    let ttsPartUrls = {};
+    let fullAudioPromise = null;
+    let fullAudioScriptKey = '';
 
-    async function fetchSingleTtsPartUrl(chunkText) {
-      const ttsUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
+    function buildTinySilentWavUrl() {
+      const sampleRate = 8000, numSamples = 1600;
+      const buf = new ArrayBuffer(44 + numSamples * 2);
+      const v = new DataView(buf);
+      const wr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+      wr(0, 'RIFF'); v.setUint32(4, 36 + numSamples * 2, true); wr(8, 'WAVE');
+      wr(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true);
+      v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+      wr(36, 'data'); v.setUint32(40, numSamples * 2, true);
+      return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+    }
+
+    function prepareFullAudioInBackground() {
+      if (!currentRadioScript || !apiKey.trim()) return null;
       const voiceName = document.getElementById('radioVoice')?.value || 'Kore';
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const res = await fetch(ttsUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: chunkText }] }],
-            generationConfig: {
-              responseModalities: ['AUDIO'],
-              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } }
-            }
-          })
+      const key = `${voiceName}::${currentRadioScript}`;
+      if (fullAudioScriptKey === key && fullAudioPromise) return fullAudioPromise;
+
+      fullAudioScriptKey = key;
+      fullAudioPromise = (async () => {
+        const wavBlob = await fetchFullTtsWavBlob(currentRadioScript, (idx, total) => {
+          const st = document.getElementById('radioStatusLine');
+          if (st && !radioIsPlaying) {
+            st.textContent = `Preparing full audio (${idx}/${total})...`;
+          }
         });
-        const data = await res.json();
-        const audioPart = data?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData && p.inlineData.data);
-        if (res.ok && audioPart) {
-          const wavBlob = pcm16ChunksToWavBlob([audioPart.inlineData.data], 24000);
-          return URL.createObjectURL(wavBlob);
+        if (cachedAudioBlobUrl) {
+          try { URL.revokeObjectURL(cachedAudioBlobUrl); } catch (e) {}
         }
-        if (attempt === 0 && (res.status === 429 || res.status === 503)) {
-          await new Promise((r) => setTimeout(r, 1800));
-          continue;
+        cachedAudioBlobUrl = URL.createObjectURL(wavBlob);
+        cachedAudioForScript = key;
+        const audio = document.getElementById('radioAudioPlayer');
+        if (audio && audio.paused) {
+          audio.src = cachedAudioBlobUrl;
+          audio.classList.remove('hidden');
         }
-        throw new Error((data.error && data.error.message) || 'TTS unavailable');
-      }
-    }
-
-    async function prefetchNextTtsPart(nextIdx) {
-      if (nextIdx >= ttsChunks.length || ttsPartUrls[nextIdx] || !apiKey.trim()) return;
-      try {
-        ttsPartUrls[nextIdx] = await fetchSingleTtsPartUrl(ttsChunks[nextIdx]);
-      } catch (e) {}
-    }
-
-    async function playTtsPartAt(idx) {
-      const audio = document.getElementById('radioAudioPlayer');
-      const rate = parseFloat(document.getElementById('radioSpeed').value) || 0.95;
-      if (!audio || idx >= ttsChunks.length) {
-        document.getElementById('radioStatusLine').textContent = 'Briefing finished.';
-        return;
-      }
-      ttsChunkIdx = idx;
-      if (!ttsPartUrls[idx]) {
-        document.getElementById('radioStatusLine').textContent = `Loading part ${idx + 1} of ${ttsChunks.length}...`;
-        ttsPartUrls[idx] = await fetchSingleTtsPartUrl(ttsChunks[idx]);
-      }
-      audio.src = ttsPartUrls[idx];
-      audio.playbackRate = rate;
-      audio.classList.remove('hidden');
-      registerMediaSession();
-      audio.onended = () => {
-        if (ttsChunkIdx + 1 < ttsChunks.length) {
-          playTtsPartAt(ttsChunkIdx + 1).catch(() => {
-            document.getElementById('radioStatusLine').textContent = 'Finished available parts.';
-          });
-        } else {
-          document.getElementById('radioStatusLine').textContent = 'Briefing finished.';
+        const st = document.getElementById('radioStatusLine');
+        if (st && !radioIsPlaying) {
+          st.textContent = 'Full audio ready — tap Play for screen-off listening.';
         }
-      };
-      await audio.play();
-      document.getElementById('radioStatusLine').textContent = `Playing part ${idx + 1}/${ttsChunks.length} at ${rate}x (continues when screen sleeps).`;
-      prefetchNextTtsPart(idx + 1);
+        return cachedAudioBlobUrl;
+      })().catch((err) => {
+        fullAudioScriptKey = '';
+        fullAudioPromise = null;
+        throw err;
+      });
+      return fullAudioPromise;
     }
 
     async function playRadioScript() {
@@ -998,28 +982,33 @@ Return ONLY valid JSON array of 20 objects:
 
       const audio = document.getElementById('radioAudioPlayer');
       const rate = parseFloat(document.getElementById('radioSpeed').value) || 0.95;
+      const voiceName = document.getElementById('radioVoice')?.value || 'Kore';
+      const key = `${voiceName}::${currentRadioScript}`;
 
-      // Resume paused native audio immediately
-      if (audio && cachedAudioForScript === currentRadioScript && audio.src && audio.paused && audio.currentTime > 0 && !audio.ended) {
+      if (audio && cachedAudioForScript === key && cachedAudioBlobUrl) {
+        if (audio.src !== cachedAudioBlobUrl) audio.src = cachedAudioBlobUrl;
         audio.playbackRate = rate;
         audio.classList.remove('hidden');
         registerMediaSession();
+        radioIsPlaying = true;
         audio.play().catch(() => {});
-        document.getElementById('radioStatusLine').textContent = `Playing part ${ttsChunkIdx + 1}/${ttsChunks.length} at ${rate}x (continues when screen sleeps).`;
+        document.getElementById('radioStatusLine').textContent = `Background audio playing at ${rate}x (continues when screen sleeps).`;
         return;
       }
 
-      // 1. Stream Part 1 immediately (<3s, stays inside user gesture) & prefetch Parts 2..N in background
       if (apiKey.trim() && audio) {
-        document.getElementById('radioStatusLine').textContent = 'Starting background audio...';
         try {
-          if (cachedAudioForScript !== currentRadioScript) {
-            Object.values(ttsPartUrls).forEach((u) => { try { URL.revokeObjectURL(u); } catch (e) {} });
-            ttsPartUrls = {};
-            ttsChunks = splitScriptForTts(currentRadioScript, 3400);
-            cachedAudioForScript = currentRadioScript;
-          }
-          await playTtsPartAt(0);
+          audio.src = buildTinySilentWavUrl();
+          await audio.play().catch(() => {});
+          document.getElementById('radioStatusLine').textContent = 'Preparing full single-track audio...';
+          const url = await prepareFullAudioInBackground();
+          audio.src = url;
+          audio.playbackRate = rate;
+          audio.classList.remove('hidden');
+          registerMediaSession();
+          radioIsPlaying = true;
+          await audio.play();
+          document.getElementById('radioStatusLine').textContent = `Background audio playing at ${rate}x (continues when screen sleeps).`;
           return;
         } catch (e) {}
       }
@@ -1081,6 +1070,7 @@ Return ONLY valid JSON array of 20 objects:
       document.getElementById('radioDateBadge').textContent = dateBanner ? `On Air · ${dateBanner} · ~${estMin} min (${wc} words)` : `On Air · ~${estMin} min (${wc} words)`;
       document.getElementById('radioHeadline').textContent = headline;
       document.getElementById('radioTranscriptCard').classList.remove('hidden');
+      prepareFullAudioInBackground();
       const dateHtml = dateBanner ? `<div class="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs font-semibold text-amber-900">Briefing Date: ${escapeHtml(dateBanner)}</div>` : '';
       const srcHtml = sources.length ? `<div class="p-3 rounded-xl bg-indigo-50/60 border border-indigo-100 text-xs text-slate-700"><strong>Live Web Sources: </strong>${sources.map((s) => `<a href="${escapeHtml(s.uri)}" target="_blank" rel="noopener noreferrer" class="text-indigo-700 underline mr-2.5">${escapeHtml(s.title)}</a>`).join('')}</div>` : '';
       document.getElementById('radioTranscriptBody').innerHTML = dateHtml + srcHtml + (sections || []).map((sec) => `
@@ -1109,7 +1099,7 @@ Return ONLY valid JSON array of 20 objects:
         const prompt = `Prepare a comprehensive, minimum 15-minute UPSC CSE-level Daily Current Affairs Audio Briefing${topics ? ` focusing on: ${topics}` : ' covering 5 to 10 high-importance GS I–IV articles ranked by UPSC exam relevance'} strictly from the last 2 days (${yesterdayStr} and ${todayStr}).${newsBlock}
 IMPORTANT FOR AUDIO & DEPTH (LANGUAGE: Write the entire spokenScript and all sections strictly in clear English):
 1. Select 5 to 10 high-importance articles (never fewer than 5 when available) across Polity, Economy, IR, Environment, Sci-Tech, and Governance.
-2. Start the spokenScript by clearly saying the date ("Here is your UPSC Daily News Radio for ${todayStr}."), and before each article speak its date.
+2. Start the spokenScript directly with today's date and the first topic itself (e.g., "${todayStr}. Topic 1: ..."). DO NOT include filler greetings like "Hello UPSC aspirants", "Welcome to Daily News Radio", or "important updates".
 3. Make the spokenScript thorough and unhurried (~2,000 to 2,400 words so it plays for at least 15 minutes at 0.95x pace), covering for every article: what happened, why it matters for UPSC, constitutional Articles/Acts/Committees, concrete Mains examples, and Prelims/Mains takeaways—with no markdown symbols or raw URLs.
 Return ONLY valid JSON:
 {
@@ -1134,7 +1124,7 @@ Return ONLY valid JSON:
             const spokenParts = topItems.map((it, idx) => `Update ${idx + 1}, dated ${it.date}, from ${it.source}. ${it.title}. ${it.desc}`);
             parsed = {
               headline: `UPSC Live Feed Radio · ${todayStr}`,
-              spokenScript: `Here is your UPSC Daily News Radio for ${todayStr}. ` + spokenParts.join(' '),
+              spokenScript: `${todayStr}. ` + spokenParts.join(' '),
               sections: topItems.map((it) => ({
                 date: it.date,
                 paper: it.source,
