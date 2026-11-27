@@ -843,11 +843,12 @@ Return ONLY valid JSON array of 20 objects:
     function registerMediaSession() {
       if ('mediaSession' in navigator) {
         try {
+          const iconUrl = new URL('icon-192.png', window.location.href).href;
           navigator.mediaSession.metadata = new MediaMetadata({
             title: document.getElementById('radioHeadline').textContent || 'UPSC Daily News Radio',
             artist: 'UPSC · LBSNAA 2027',
             album: document.getElementById('radioDateBadge').textContent || 'Daily Briefing',
-            artwork: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' }]
+            artwork: [{ src: iconUrl, sizes: '192x192', type: 'image/png' }]
           });
           navigator.mediaSession.playbackState = 'playing';
           navigator.mediaSession.setActionHandler('play', () => playRadioScript());
@@ -922,7 +923,7 @@ Return ONLY valid JSON array of 20 objects:
     let fullAudioScriptKey = '';
 
     function buildTinySilentWavUrl() {
-      const sampleRate = 8000, numSamples = 1600;
+      const sampleRate = 8000, numSamples = 24000;
       const buf = new ArrayBuffer(44 + numSamples * 2);
       const v = new DataView(buf);
       const wr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
@@ -966,6 +967,10 @@ Return ONLY valid JSON array of 20 objects:
       })().catch((err) => {
         fullAudioScriptKey = '';
         fullAudioPromise = null;
+        const st = document.getElementById('radioStatusLine');
+        if (st && !radioIsPlaying) {
+          st.textContent = 'TTS quota/limit reached — using device voice (pauses on screen-off).';
+        }
         throw err;
       });
       return fullAudioPromise;
@@ -986,6 +991,7 @@ Return ONLY valid JSON array of 20 objects:
       const key = `${voiceName}::${currentRadioScript}`;
 
       if (audio && cachedAudioForScript === key && cachedAudioBlobUrl) {
+        audio.loop = false;
         if (audio.src !== cachedAudioBlobUrl) audio.src = cachedAudioBlobUrl;
         audio.playbackRate = rate;
         audio.classList.remove('hidden');
@@ -998,10 +1004,12 @@ Return ONLY valid JSON array of 20 objects:
 
       if (apiKey.trim() && audio) {
         try {
+          audio.loop = true;
           audio.src = buildTinySilentWavUrl();
           await audio.play().catch(() => {});
           document.getElementById('radioStatusLine').textContent = 'Preparing full single-track audio...';
           const url = await prepareFullAudioInBackground();
+          audio.loop = false;
           audio.src = url;
           audio.playbackRate = rate;
           audio.classList.remove('hidden');
@@ -1565,9 +1573,11 @@ Return ONLY valid JSON:
         const data = await res.json();
         const audioPart = data?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData && p.inlineData.data);
         if (!res.ok || !audioPart) {
+          if (b64Parts.length > 0) break; // Keep already-fetched parts instead of failing completely
           throw new Error((data.error && data.error.message) || `Audio part ${i + 1} unavailable.`);
         }
         b64Parts.push(audioPart.inlineData.data);
+        if (i + 1 < chunks.length) await new Promise((r) => setTimeout(r, 400));
       }
       return pcm16ChunksToWavBlob(b64Parts, 24000);
     }
@@ -1644,6 +1654,16 @@ Return ONLY valid JSON:
       document.getElementById('settingsModal').classList.add('hidden');
     });
 
+    const _audioEl = document.getElementById('radioAudioPlayer');
+    if (_audioEl) {
+      _audioEl.addEventListener('play', () => {
+        radioIsPlaying = true;
+        registerMediaSession();
+      });
+      _audioEl.addEventListener('pause', () => {
+        if (!_audioEl.ended) radioIsPlaying = false;
+      });
+    }
     loadAll();
 
     if ('serviceWorker' in navigator) {
