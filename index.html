@@ -235,9 +235,7 @@
           </div>
           <div id="radioStatusLine" class="text-xs text-indigo-200 pt-1">Press Play to listen at 0.95x pace.</div>
           <div id="deviceVoiceProgressWrap" class="hidden space-y-1 pt-1">
-            <div class="w-full h-2 bg-white/15 rounded-full overflow-hidden">
-              <div id="deviceVoiceProgressBar" class="h-full bg-amber-400 rounded-full transition-all duration-300" style="width: 0%"></div>
-            </div>
+            <input id="deviceVoiceScrubber" type="range" min="0" max="1" value="0" class="w-full accent-amber-400 cursor-pointer" />
           </div>
           <audio id="radioAudioPlayer" class="hidden w-full h-9 rounded-lg mt-1" controls></audio>
         </div>
@@ -845,6 +843,19 @@ Return ONLY valid JSON array of 20 objects:
     let cachedAudioBlobUrl = '';
     let cachedAudioForScript = '';
 
+    function syncMediaPositionState() {
+      const audio = document.getElementById('radioAudioPlayer');
+      if ('mediaSession' in navigator && 'setPositionState' in navigator.mediaSession && audio && isFinite(audio.duration) && audio.duration > 0) {
+        try {
+          navigator.mediaSession.setPositionState({
+            duration: audio.duration,
+            playbackRate: audio.playbackRate || 1,
+            position: Math.min(audio.currentTime || 0, audio.duration)
+          });
+        } catch (e) {}
+      }
+    }
+
     function registerMediaSession() {
       if ('mediaSession' in navigator) {
         try {
@@ -859,6 +870,30 @@ Return ONLY valid JSON array of 20 objects:
           navigator.mediaSession.setActionHandler('play', () => playRadioScript());
           navigator.mediaSession.setActionHandler('pause', () => pauseRadioScript());
           navigator.mediaSession.setActionHandler('stop', () => stopSpeech());
+          navigator.mediaSession.setActionHandler('previoustrack', null);
+          navigator.mediaSession.setActionHandler('nexttrack', null);
+          navigator.mediaSession.setActionHandler('seekto', (details) => {
+            const audio = document.getElementById('radioAudioPlayer');
+            if (audio && isFinite(audio.duration) && details.seekTime != null) {
+              audio.currentTime = Math.max(0, Math.min(details.seekTime, audio.duration));
+              syncMediaPositionState();
+            }
+          });
+          navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+            const audio = document.getElementById('radioAudioPlayer');
+            if (audio && isFinite(audio.duration)) {
+              audio.currentTime = Math.max(0, audio.currentTime - (details.seekOffset || 15));
+              syncMediaPositionState();
+            }
+          });
+          navigator.mediaSession.setActionHandler('seekforward', (details) => {
+            const audio = document.getElementById('radioAudioPlayer');
+            if (audio && isFinite(audio.duration)) {
+              audio.currentTime = Math.min(audio.duration, audio.currentTime + (details.seekOffset || 15));
+              syncMediaPositionState();
+            }
+          });
+          syncMediaPositionState();
         } catch (e) {}
       }
     }
@@ -883,8 +918,8 @@ Return ONLY valid JSON array of 20 objects:
         audio.pause();
         audio.currentTime = 0;
       }
-      const dvBar = document.getElementById('deviceVoiceProgressBar');
-      if (dvBar) dvBar.style.width = '0%';
+      const dvScrub = document.getElementById('deviceVoiceScrubber');
+      if (dvScrub) dvScrub.value = '0';
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
       if ('mediaSession' in navigator) {
         try { navigator.mediaSession.playbackState = 'none'; } catch (e) {}
@@ -925,10 +960,11 @@ Return ONLY valid JSON array of 20 objects:
       const rateLabel = (parseFloat(document.getElementById('radioSpeed').value) || 0.95).toFixed(2);
       document.getElementById('radioStatusLine').textContent = `Device voice: part ${radioQueueIdx + 1}/${radioQueue.length} at ${rateLabel}x`;
       const dvWrap = document.getElementById('deviceVoiceProgressWrap');
-      const dvBar = document.getElementById('deviceVoiceProgressBar');
-      if (dvWrap && dvBar) {
+      const dvScrub = document.getElementById('deviceVoiceScrubber');
+      if (dvWrap && dvScrub) {
         dvWrap.classList.remove('hidden');
-        dvBar.style.width = `${Math.round(((radioQueueIdx + 1) / Math.max(radioQueue.length, 1)) * 100)}%`;
+        dvScrub.max = String(Math.max(radioQueue.length - 1, 0));
+        dvScrub.value = String(radioQueueIdx);
       }
       window.speechSynthesis.speak(utter);
     }
@@ -1683,6 +1719,21 @@ Return ONLY valid JSON:
       });
       _audioEl.addEventListener('pause', () => {
         if (!_audioEl.ended) radioIsPlaying = false;
+        if ('mediaSession' in navigator) { try { navigator.mediaSession.playbackState = 'paused'; } catch (e) {} }
+      });
+      _audioEl.addEventListener('loadedmetadata', syncMediaPositionState);
+      _audioEl.addEventListener('timeupdate', syncMediaPositionState);
+      _audioEl.addEventListener('ratechange', syncMediaPositionState);
+    }
+    const _dvScrub = document.getElementById('deviceVoiceScrubber');
+    if (_dvScrub) {
+      _dvScrub.addEventListener('input', (e) => {
+        if (!radioQueue.length) return;
+        const targetIdx = Math.max(0, Math.min(Number(e.target.value) || 0, radioQueue.length - 1));
+        window.speechSynthesis.cancel();
+        radioQueueIdx = targetIdx;
+        radioIsPlaying = true;
+        speakNextChunk();
       });
     }
     loadAll();
